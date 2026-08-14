@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<link rel="icon" type="image/png" href="assets/icon.png">
 <title>Aurum · 液态玻璃音乐播放器</title>
 <style>
   /* ============ 得意黑 字体（SmileySans，自带斜体） ============ */
@@ -33,6 +34,96 @@
     --text: rgba(255,255,255,.92);
     --text-dim: rgba(255,255,255,.55);
     --text-faint: rgba(255,255,255,.34);
+  }
+
+  /* ============ Tauri 自定义标题栏 ============ */
+  body { margin: 0; }
+
+  .tauri-titlebar {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 8px;
+    background: rgba(20, 20, 25, 0.65);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    z-index: 10000;
+    user-select: none;
+  }
+
+  .tauri-titlebar[hidden] { display: none; }
+
+  .tauri-drag-region {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    -webkit-app-region: drag;
+    app-region: drag;
+  }
+
+  .tauri-icon {
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    object-fit: contain;
+  }
+
+  .tauri-title {
+    font-family: var(--font);
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.7);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .tauri-controls {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    flex-shrink: 0;
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+
+  .tauri-btn {
+    width: 36px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.7);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+    border-radius: 0;
+  }
+
+  .tauri-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+  }
+
+  .tauri-btn.tauri-min:hover,
+  .tauri-btn.tauri-max:hover {
+    background: rgba(255, 255, 255, 0.12);
+  }
+
+  .tauri-btn.tauri-close:hover {
+    background: #e81123;
+    color: #fff;
+  }
+
+  body:has(.tauri-titlebar:not([hidden])) .app {
+    padding-top: 32px;
+    height: calc(100vh - 32px);
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -627,6 +718,25 @@
 </style>
 </head>
 <body>
+
+<!-- Tauri 自定义标题栏（仅 Tauri 环境下通过 JS 显示） -->
+<div class="tauri-titlebar" id="tauriTitlebar" hidden>
+  <div class="tauri-drag-region">
+    <img class="tauri-icon" src="assets/icon.png" alt="Aurum" onerror="this.style.display='none'">
+    <span class="tauri-title">Aurum · 液态玻璃音乐播放器</span>
+  </div>
+  <div class="tauri-controls">
+    <button class="tauri-btn tauri-min" id="tauriMin" title="最小化">
+      <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1 5h8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+    </button>
+    <button class="tauri-btn tauri-max" id="tauriMax" title="最大化">
+      <svg width="10" height="10" viewBox="0 0 10 10"><rect x="1.5" y="1.5" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>
+    </button>
+    <button class="tauri-btn tauri-close" id="tauriClose" title="关闭">
+      <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1.5 1.5L8.5 8.5M8.5 1.5L1.5 8.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+</div>
 
 <div class="bg-cover" id="bgCover"></div>
 <div class="bg-tint a" id="bgA"></div>
@@ -2014,6 +2124,50 @@ document.addEventListener('keydown', (e) => {
 
 /* ---------------- 启动：默认推荐 ---------------- */
 search('周杰伦');
+
+/* ---------------- Tauri 窗口控制 ---------------- */
+(function setupTauriControls() {
+  const invoke = window.__TAURI_INTERNALS__?.invoke;
+  if (!invoke) return;
+
+  const titlebar = document.getElementById('tauriTitlebar');
+  if (titlebar) titlebar.hidden = false;
+
+  const minBtn = document.getElementById('tauriMin');
+  const maxBtn = document.getElementById('tauriMax');
+  const closeBtn = document.getElementById('tauriClose');
+
+  let isMaximized = false;
+
+  // 窗口命令候选列表（不同 Tauri 版本可能有差异）
+  const commands = {
+    minimize: ['plugin:webview|webview_minimize', 'plugin:window:window_minimize'],
+    toggleMax: ['plugin:webview|webview_toggle_maximize', 'plugin:window:window_toggle_maximize'],
+    close: ['plugin:webview|webview_close', 'plugin:window:window_close'],
+  };
+
+  async function tryInvoke(cmdLists) {
+    for (const cmd of cmdLists) {
+      try { await invoke(cmd); return true; } catch(e) {}
+    }
+    return false;
+  }
+
+  const updateMaxIcon = () => {
+    const svg = maxBtn?.querySelector('svg');
+    if (!svg) return;
+    svg.innerHTML = isMaximized
+      ? '<rect x="2.5" y="2.5" width="5" height="5" rx="0.8" fill="none" stroke="currentColor" stroke-width="1"/><rect x="1.5" y="3.5" width="5" height="5" rx="0.8" fill="none" stroke="currentColor" stroke-width="1"/>'
+      : '<rect x="1.5" y="1.5" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.1"/>';
+  };
+
+  if (minBtn) minBtn.addEventListener('click', () => tryInvoke(commands.minimize));
+  if (maxBtn) maxBtn.addEventListener('click', async () => {
+    const ok = await tryInvoke(commands.toggleMax);
+    if (ok) { isMaximized = !isMaximized; updateMaxIcon(); }
+  });
+  if (closeBtn) closeBtn.addEventListener('click', () => tryInvoke(commands.close));
+})();
 </script>
 </body>
 </html>

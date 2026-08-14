@@ -1,6 +1,12 @@
 # Aurum · 液态玻璃音乐播放器
 
+<div align="center">
+
+<img src="assets/icon.png" alt="Aurum" width="120">
+
 > 一个单文件、零依赖、液态玻璃风格的音乐播放器。
+
+</div>
 
 ## 特性
 
@@ -41,6 +47,15 @@ python -m http.server 8123
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/YOUR_USERNAME/aurum)
 
+### 手动部署（Web）
+
+1. 把项目推到 GitHub / GitLab / Bitbucket
+2. 打开 [vercel.com/new](https://vercel.com/new)，导入仓库
+3. **框架预设**：选 **"Other"**（不是 Next.js / Vite 等）
+4. **构建命令**：留空
+5. **输出目录**：留空（默认根目录）
+6. 点 **Deploy**，等十几秒就上线
+
 ### 手动部署（CLI）
 
 ```bash
@@ -62,27 +77,9 @@ vercel
 vercel --prod   # 推到生产环境
 ```
 
-### 手动部署（Web）
-
-1. 把项目推到 GitHub / GitLab / Bitbucket
-2. 打开 [vercel.com/new](https://vercel.com/new)，导入仓库
-3. **框架预设**：选 **"Other"**（不是 Next.js / Vite 等）
-4. **构建命令**：留空
-5. **输出目录**：留空（默认根目录）
-6. 点 **Deploy**，等十几秒就上线
-
-### 配置 `vercel.json`（可选）
-
-如果 Vercel 没自动识别入口，可在根目录加一个 `vercel.json`：
-
-```json
-{
-  "buildCommand": null,
-  "outputDirectory": ".",
-  "framework": null,
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
-}
-```
+> ✅ **会推送到 Vercel 的内容**：`index.html`、`assets/`、`README.md`、`.gitignore`
+> 
+> ❌ **不会推送**：`aurum-tauri/`（桌面壳）、`dist-release/`（exe 产物），已被 `.gitignore` 排除。
 
 ## 桌面版（可选）
 
@@ -95,6 +92,11 @@ cargo tauri build
 ```
 
 需要 Rust 工具链 + Tauri CLI，详见 [Tauri 官方文档](https://v2.tauri.app/start/)。
+
+**桌面版特点**：
+- 透明无框窗口 + 自定义标题栏（带最小化/最大化/关闭按钮）
+- 毛玻璃背景效果
+- 程序图标采用 `assets/icon.png`
 
 ## 版权
 
