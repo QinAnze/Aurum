@@ -4,100 +4,103 @@
 
 <img src="assets/icon.png" alt="Aurum" width="120">
 
-> 一个单文件、零依赖、液态玻璃风格的音乐播放器。
+> 封面取色的液态玻璃面板、360° 频谱环、重力词云 —— 同一套视觉语言的两种实现。
 
 </div>
 
+## 两个版本
+
+| 版本 | 目录 | 技术栈 | 适合 |
+| --- | --- | --- | --- |
+| **Web 版** | 根目录 `index.html` | 纯 HTML / CSS / JS，零运行时依赖 | 双击即用、可整目录丢到 Vercel |
+| **桌面版** | `aurum_flutter/` | Flutter 3.47 · Dart 3.13 · flutter_soloud | 本地音乐库、离线播放、持续 60fps 特效 |
+
+两版共享同一套设计语言与动画参数（`index.html` 是原生实现，Flutter 版是逐项对齐的移植）。
+
 ## 特性
 
-- 🎵 **单文件应用**：整个播放器就是一个 `index.html`，无构建、无打包
-- 🪟 **液态玻璃 UI**：backdrop-filter 毛玻璃、封面取色动态渐变
-- 🎤 **实时频谱**：Web Audio AnalyserNode，白闭合曲线环绕封面
-- ✨ **词云特效**：魔法书式重力动画，按音节节奏入场
-- 🎛️ **三种播放模式**：列表循环 / 单曲循环 / 随机
-- 🔊 **音量旋钮**：SVG 270° 弧旋钮
-- 📱 **响应式**：桌面 / 移动自适应
+**共有**
 
-## 技术栈
+- 🪟 **液态玻璃 UI**：半透渐变 + 渐变描边 + 大投影，封面取色驱动动态背景
+- 🎤 **360° 频谱环**：120 点闭合贝塞尔曲线环绕封面，高潮时发亮而非发虚
+- ✨ **重力词云**：按音节节奏从底部升起、悬停、坠落，句末两词放大
+- 🌊 **高潮驱动**：时域 RMS → 全曲峰值保持 → climax 因子，驱动封面抖动、歌名光晕与跷跷板摆动
+- 🎛️ **超频总开关**：一键关掉词云 / 频谱 / 抖动，回到极简白环
+- 🔊 **音量旋钮**：SVG 270° 弧，拖拽 / 滚轮 / 方向键
+- 🔁 **三种播放模式**：列表循环 / 单曲循环 / 随机
 
-- 纯 HTML + CSS + JavaScript（零运行时依赖）
-- Web Audio API（频谱 + 响度检测）
-- Canvas 2D（词云 / 频谱绘制）
-- 得意黑字体（SmileySans-Oblique）
-- 网易云音乐公共 API（GDStudio + injahow 双源）
+**桌面版额外**
 
-## 本地预览
+- 📁 **本地音乐库**：选文件夹递归扫描，完全离线播放
+- 🖼️ **内嵌元数据**：从音频里直接读封面与歌词（ID3v2 APIC/USLT/SYLT、FLAC PICTURE/Vorbis、M4A covr/©lyr）
+- 🗂️ **在线 / 本地双视图**：互不干扰，切视图不影响正在播放的歌
+- ⌨️ **键盘操作**：空格播放暂停、方向键切歌 / 调音量
+
+## 快速开始
+
+### Web 版
 
 ```bash
-# 方式 1：直接打开
-start index.html
-
-# 方式 2：起个本地服务器
+start index.html          # Windows：直接双击也行
+# 或起个本地服务器，避开 file:// 的跨域限制
 python -m http.server 8123
-# 然后访问 http://localhost:8123
 ```
 
-> 用本地服务器可避免部分浏览器的 `file://` 跨域限制（封面图 / 字体加载）。
+部署到 Vercel：框架预设选 **Other**，构建命令与输出目录都留空，直接部署根目录。
 
-## 部署到 Vercel
-
-本项目**无需构建命令**，直接把根目录部署上去即可。
-
-### 一键部署
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/YOUR_USERNAME/aurum)
-
-### 手动部署（Web）
-
-1. 把项目推到 GitHub / GitLab / Bitbucket
-2. 打开 [vercel.com/new](https://vercel.com/new)，导入仓库
-3. **框架预设**：选 **"Other"**（不是 Next.js / Vite 等）
-4. **构建命令**：留空
-5. **输出目录**：留空（默认根目录）
-6. 点 **Deploy**，等十几秒就上线
-
-### 手动部署（CLI）
+### 桌面版
 
 ```bash
-# 1. 全局安装 Vercel CLI
-npm i -g vercel
-
-# 2. 在项目根目录执行
-cd Music-2
-vercel
-
-# 3. 按提示走（第一次会要求登录/注册）
-#    - Scope: 选你的账号
-#    - Link to existing project? → No
-#    - Project name: aurum（或你喜欢的名字）
-#    - Directory: .（当前目录）
-#    - Build Settings: 选 "Other"，Build Command 留空，Output Directory 留空
-
-# 4. 部署完成，拿到预览 URL
-vercel --prod   # 推到生产环境
+cd aurum_flutter
+flutter pub get
+flutter run -d windows
 ```
 
-> ✅ **会推送到 Vercel 的内容**：`index.html`、`assets/`、`README.md`、`.gitignore`
-> 
-> ❌ **不会推送**：`aurum-tauri/`（桌面壳）、`dist-release/`（exe 产物），已被 `.gitignore` 排除。
+依赖 Flutter 3.47+ / Dart 3.13+。完整构建说明、Windows 软链问题的两种解法、
+以及 `flutter build windows --release` 的产物位置，见 [`aurum_flutter/README.md`](aurum_flutter/README.md)。
 
-## 桌面版（可选）
+## 目录结构
 
-项目附带 Tauri v2 桌面壳（`aurum-tauri/`），可打包为 Windows exe：
+```
+.
+├── index.html                # Web 版：单文件应用
+├── assets/                   # Web 版图标与字体
+└── aurum_flutter/            # 桌面版（Flutter）
+    ├── lib/
+    │   ├── api/              搜索 / 封面 / 歌词 / 取色 / 播放地址候选链
+    │   ├── audio/            flutter_soloud 引擎、时长探测、内嵌元数据、切歌门闩
+    │   ├── effects/          可视化主时钟、频谱环、词云
+    │   ├── lyrics/           LRC 解析 + CJK 分词
+    │   ├── local/            本地音乐库（选目录 / 扫描 / 同名歌词）
+    │   ├── state/            全局状态（播放、列表、主题色、本地库）
+    │   ├── theme/            设计 token 与取色数学
+    │   ├── ui/ home_page     整页组装
+    │   └── widgets/          玻璃面板、封面、侧栏、控件、旋钮……
+    ├── test/                 89 个单测
+    └── windows/              Windows runner
+```
+
+## 数据源与已知限制
+
+在线播放走公共接口，**没有内置任何音源**，也不绕过任何版权限制：
+
+- GDStudio 公共 API（网易优先、酷我兜底）
+- injahow meting（302 直链兜底）
+- 本地 NCMApi sidecar（`127.0.0.1:4530`，启动自动探测，可选）
+
+已知限制（原因与修法都写在 `aurum_flutter/README.md` 的「排障记录」里）：
+
+1. **netease 图片 CDN 会按客户端指纹拦截**：`p1/p2.music.126.net` 对 dart:io 一律 403，只有 `p3` 放行 —— 桌面版因此自建了多 host 故障转移的图片加载器。
+2. **公共接口偶发限流 / 不可达**：搜索可能返回空列表，属上游问题。
+3. 音源可用性随平台策略变化，随时可能失效。
+
+## 测试
 
 ```bash
-cd aurum-tauri/src-tauri
-cargo tauri build
-# 产物在 target/release/aurum.exe + bundle/msi/
+cd aurum_flutter
+flutter test          # 89 项：分词 / 歌词 / 时长探测 / 频谱标度 / 切歌并发 / 取色 / 本地库 / 内嵌标签
 ```
-
-需要 Rust 工具链 + Tauri CLI，详见 [Tauri 官方文档](https://v2.tauri.app/start/)。
-
-**桌面版特点**：
-- 透明无框窗口 + 自定义标题栏（带最小化/最大化/关闭按钮）
-- 毛玻璃背景效果
-- 程序图标采用 `assets/icon.png`
 
 ## 版权
 
-仅供学习交流，音乐版权归原平台所有。
+仅供学习交流，音乐版权归原平台所有。字体为「得意黑 Smiley Sans」（SIL OFL）。

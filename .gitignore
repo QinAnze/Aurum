@@ -34,3 +34,7 @@ npm-debug.log*
 # Temp
 __chk.js
 *.tmp
+
+# 本地临时构建缓存
+_rhine_build/
+_aurum_b*/

@@ -1,0 +1,116 @@
+// Aurum · UI smoke test：用桩引擎把整个 HomePage widget 树编译并构建出来，
+// 验证 main.dart → HomePage → 全部 widgets 的装配无误（不触网、不出图）。
+import 'dart:async';
+import 'dart:typed_data';
+
+import 'package:aurum/audio/player_engine.dart';
+import 'package:aurum/main.dart';
+import 'package:aurum/state/app_state.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+class _StubEngine implements PlayerEngine {
+  @override
+  Future<void> init() async {}
+
+  @override
+  Future<bool> loadAndPlay(List<String> urls) async => false;
+
+  @override
+  bool get hasSource => false;
+
+  @override
+  bool get isPlaying => false;
+
+  @override
+  double get positionSec => 0;
+
+  @override
+  double get durationSec => 0;
+
+  @override
+  Future<void> play() async {}
+
+  @override
+  Future<void> pause() async {}
+
+  @override
+  Future<void> seek(double sec) async {}
+
+  @override
+  double get volume => 1.0;
+
+  @override
+  Future<void> setVolume(double v) async {}
+
+  @override
+  Stream<EngineEvent> get events => const Stream.empty();
+
+  @override
+  Float32List? get fft => null;
+
+  @override
+  Float32List? get wave => null;
+
+  @override
+  void dispose() {}
+}
+
+void main() {
+  testWidgets('HomePage 全树构建 smoke', (tester) async {
+    final app = AppState(engine: _StubEngine());
+
+    await tester.pumpWidget(AurumApp(app: app));
+    // 放行启动期异步（本地 API 探测 + 默认搜索）
+    await tester.runAsync(
+        () async => await Future.delayed(const Duration(milliseconds: 800)));
+    await tester.pump();
+
+    // 品牌与总开关
+    expect(find.text('Aurum'), findsOneWidget);
+    expect(find.text('ON'), findsOneWidget);
+    // 空态：标题/歌手占位 + 列表空态
+    expect(find.text('还没有放歌哦…'), findsOneWidget);
+    expect(find.text('点一首嘛？人家等着呢'), findsOneWidget);
+    expect(find.textContaining('想听什么就自己搜啦'), findsOneWidget);
+    expect(find.textContaining('播放列表'), findsOneWidget);
+    // 控件行：播放键 + 三个线性图标存在
+    expect(find.byType(GestureDetector), findsWidgets);
+
+    // 交互：切换总开关 → OFF
+    await tester.tap(find.text('ON'));
+    await tester.pump();
+    expect(find.text('OFF'), findsOneWidget);
+
+    // 卸载整棵树（释放 ticker），并显式销毁 AppState（取消 toast 定时器）
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    app.dispose();
+  });
+
+  testWidgets('窄屏（<880px）走抽屉布局', (tester) async {
+    final app = AppState(engine: _StubEngine());
+
+    tester.view.physicalSize = const Size(800, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(AurumApp(app: app));
+    await tester.runAsync(
+        () async => await Future.delayed(const Duration(milliseconds: 500)));
+    await tester.pump();
+
+    // 窄屏：菜单键出现（侧栏改为抽屉）
+    expect(find.byKey(const ValueKey('menu-button')), findsOneWidget);
+    // 界面仍完整
+    expect(find.text('还没有放歌哦…'), findsOneWidget);
+    // 点菜单键 → 抽屉滑入（AnimatedSlide 380ms）
+    await tester.tap(find.byKey(const ValueKey('menu-button')));
+    await tester.pump(const Duration(milliseconds: 450));
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    app.dispose();
+  });
+}

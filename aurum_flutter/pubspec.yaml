@@ -1,0 +1,31 @@
+name: aurum
+description: "Aurum · 液态玻璃音乐播放器（Flutter 移植版）"
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.2
+  # 音频引擎：支持 HTTP 流播放 + 实时 FFT/波形取数（等价 Web Audio AnalyserNode）。
+  # 用 any 让解析器取最新稳定版，装好后可在 pubspec.lock 中查得确切版本。
+  flutter_soloud: any
+  # 本地音乐：文件夹选择（桌面端）
+  file_selector: ^1.0.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icon.png
+  fonts:
+    - family: SmileySans
+      fonts:
+        - asset: assets/SmileySans-Oblique.ttf

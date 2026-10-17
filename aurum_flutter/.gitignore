@@ -1,0 +1,68 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# Widget Preview related
+.widget_preview/
+
+# ---------------------------------------------------------------------------
+# Aurum 本地/构建产物（不入库，重新构建即可再生成）
+# ---------------------------------------------------------------------------
+
+# 打包好的可运行目录（bin/ 为本地 flutter build --release 的产物）
+/bin/
+/dist/
+/dist_*/
+/preview*/
+/_dev/
+
+# Windows 构建期生成的插件软链：指向 pub-cache，跨机器无效
+/windows/flutter/ephemeral/
+
+# 占位：本机若存在其他 CMake/Qt 相关构建目录
+/qt-build/
+
+# 参考资料：第三方开源项目（自带 .git，且含数百 MB 构建产物），仅本地保留
+/Rhine-Music-Database/
