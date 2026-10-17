@@ -137,14 +137,15 @@ git tag v0.1.0 && git push origin main --tags
 
 构建产物名：`Aurum-<version>-windows-x64.zip`（解压即用，含 `aurum.exe` + 运行时 DLL + `data/`）。
 
-本地不想等 CI 时：
+**正式包一律由 GitHub Actions 产出**，本地只做开发调试：
 
 ```bash
 cd aurum_flutter
-flutter build windows --release
-Compress-Archive -Path "build/windows/x64/runner/Release/*" `
-  -DestinationPath "dist/Aurum-0.1.0-windows-x64.zip"
+flutter build windows --release   # 本地验证用，不作为发布包
 ```
+
+打标签后会自动创建 Release，下载地址形如
+`https://github.com/QinAnze/Aurum/releases/download/v0.1.0/Aurum-0.1.0-windows-x64.zip`。
 
 ## 版权
 
