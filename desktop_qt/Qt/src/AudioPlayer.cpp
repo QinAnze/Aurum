@@ -70,6 +70,13 @@ void AudioPlayer::createPlayer() {
                          [changed] { changed(); });
     }
     player->setAudioOutput(&output);
+    // 可视化数据源：Qt 6.8+ 的 QAudioBufferOutput 把解码后的 PCM 直接推过来，
+    // 不用再开第二路解码。父亲设为 player，重建播放器时自动释放。
+    bufferOutput = new QAudioBufferOutput(player.get());
+    QObject::connect(
+        bufferOutput, &QAudioBufferOutput::audioBufferReceived, player.get(),
+        [this](const QAudioBuffer &buffer) { tap.feed(buffer); });
+    player->setAudioBufferOutput(bufferOutput);
     QObject::connect(player.get(), &QMediaPlayer::positionChanged, player.get(), [this](qint64 position) {
         // 设备失效时原生后端可能先报 0；保留最后有效进度，主动换曲与跳转另行更新。
         if (!outputUnavailable && recoveryPosition < 0 && position > 0) {
@@ -167,6 +174,8 @@ void AudioPlayer::followDefaultOutput() {
  */
 bool AudioPlayer::load(QString input, bool offline, bool alternative, QString provider) {
     QUrl url(input);
+    // 换曲先清空频谱/响度历史，避免上一首的尾巴影响本曲的 climax 基线
+    tap.reset();
     const auto host = url.host();
     const bool qq = provider == "qq" && (host == "qqmusic.qq.com" || host.endsWith(".qqmusic.qq.com"));
     const bool kugou = provider == "kugou" && (host.endsWith(".kugou.com") || host.endsWith(".kugou.net"));

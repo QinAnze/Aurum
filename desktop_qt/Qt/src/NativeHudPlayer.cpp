@@ -2,91 +2,171 @@
 #include "MusicData.h"
 #include <algorithm>
 
+namespace {
+/// 圆角矩形路径。HUD 的绘制指令只认路径字符串，这里统一生成一次。
+QString roundedRect(double x, double y, double w, double h, double r) {
+    r = std::max(0.0, std::min(r, std::min(w, h) / 2));
+    const auto n = [](double v) { return QString::number(v, 'f', 2); };
+    const double x2 = x + w;
+    const double y2 = y + h;
+    QString p = "M " + n(x + r) + " " + n(y);
+    p += " L " + n(x2 - r) + " " + n(y);
+    p += " Q " + n(x2) + " " + n(y) + " " + n(x2) + " " + n(y + r);
+    p += " L " + n(x2) + " " + n(y2 - r);
+    p += " Q " + n(x2) + " " + n(y2) + " " + n(x2 - r) + " " + n(y2);
+    p += " L " + n(x + r) + " " + n(y2);
+    p += " Q " + n(x) + " " + n(y2) + " " + n(x) + " " + n(y2 - r);
+    p += " L " + n(x) + " " + n(y + r);
+    p += " Q " + n(x) + " " + n(y) + " " + n(x + r) + " " + n(y);
+    return p + " Z";
+}
+
+/// 三角形图标（播放 / 上下一首）
+QString triangle(double cx, double cy, double size, bool forward) {
+    const auto n = [](double v) { return QString::number(v, 'f', 2); };
+    const double half = size / 2;
+    if (forward) {
+        return "M " + n(cx - half * 0.7) + " " + n(cy - half) + " L " + n(cx + half * 0.8) + " " + n(cy) +
+               " L " + n(cx - half * 0.7) + " " + n(cy + half) + " Z";
+    }
+    return "M " + n(cx + half * 0.7) + " " + n(cy - half) + " L " + n(cx - half * 0.8) + " " + n(cy) +
+           " L " + n(cx + half * 0.7) + " " + n(cy + half) + " Z";
+}
+}
+
+/* ================================================================
+   底部播放条 —— Aurum 视觉：玻璃面板 + 唱片封面 + 圆角进度 + 旋钮
+   ================================================================ */
 void NativeHud::playerBar(double, double y, double width) {
     const auto &player = m_music->player;
     const auto first = hits.size();
-    const auto center = width / 2;
-    auto shade = ink();
-    shade[3] = 0.12;
-    fill(0, y, width, 1080 - y,
-         dark ? QJsonArray{0.075, 0.085, 0.075, 1} : QJsonArray{0.929, 0.922, 0.894, 1});
-    const auto duration = player.state["duration"].toDouble();
-    const auto position = duration != 0 ? std::min(1.0, player.state["position"].toDouble() / duration) : 0;
-    fill(0, y, width, 3, shade);
-    fill(0, y, width * position, 3, {119.0 / 255, 123.0 / 255, 96.0 / 255, 1});
-    playerSeekRect = QRectF(0, y, width, 12);
-    hit(0, y, width, 12, "player:open", "播放进度");
-    constexpr double coverX = 28;
-    const auto coverY = y + 17;
+
+    // ---- 配色：玻璃面板始终是「比背景更亮的一层」，不跟随 ink 反色 ----
+    const QJsonArray accent{119.0 / 255, 123.0 / 255, 96.0 / 255, 1};
+    const QJsonArray glass = dark ? QJsonArray{1.0, 1.0, 1.0, 0.07} : QJsonArray{1.0, 1.0, 1.0, 0.72};
+    const QJsonArray line = dark ? QJsonArray{1.0, 1.0, 1.0, 0.14}
+                                 : QJsonArray{0.09, 0.09, 0.075, 0.10};
+    auto dim = ink();
+    dim[3] = dark ? 0.55 : 0.48; // 次要文字
+    auto track = ink();
+    track[3] = dark ? 0.20 : 0.14; // 进度条底
+    const QJsonArray onAccent{0.98, 0.98, 0.95, 1};
+
+    // ---- 玻璃面板 ----
+    const double panelX = 20;
+    const double panelY = y + 8;
+    const double panelW = width - 40;
+    const double panelH = 80;
+    const double radius = 24;
+    op({"fill-path", roundedRect(panelX, panelY, panelW, panelH, radius), glass});
+    op({"path", roundedRect(panelX + 0.5, panelY + 0.5, panelW - 1, panelH - 1, radius - 0.5), 1, line,
+        QJsonArray{}, 0});
+
+    // ---- 封面（圆形，唱片感）----
+    const double coverX = panelX + 22;
+    const double coverY = panelY + 10;
+    const double coverSize = 60;
     if (!player.coverImage.isEmpty()) {
-        image(player.coverImage, coverX, coverY, 64, 64);
+        op({"image-circle", player.coverImage, coverX, coverY, coverSize});
+        // 唱片中心孔
+        auto hole = ink();
+        hole[3] = dark ? 0.35 : 0.22;
+        op({"ellipse", hole, coverX + coverSize / 2 - 5, coverY + coverSize / 2 - 5, 10, 10});
     } else {
-        op({"ellipse", shade, coverX, coverY, 64, 64});
-        op({"ellipse", ink(), coverX + 28, coverY + 28, 8, 8});
+        op({"ellipse", glass, coverX, coverY, coverSize, coverSize});
+        op({"arc", coverX + coverSize / 2, coverY + coverSize / 2, coverSize / 2 - 0.5, 0, 6.2832, 1, line});
+        op({"ellipse", line, coverX + coverSize / 2 - 7, coverY + coverSize / 2 - 7, 14, 14});
     }
-    const auto infoWidth = std::max(120.0, center - 280 - 116);
+
+    // ---- 歌名 / 歌手 ----
+    const double textX = coverX + coverSize + 18;
+    const double textW = width * 0.30;
     auto title = player.failed ? player.status : player.current["title"].toString();
     if (title.isEmpty() && !player.failed) {
         title = "尚未播放";
     }
-    centeredText(fit(title, 20, infoWidth, "demibold"), 116, y + 34, 20, "demibold");
+    text(fit(title, 19, textW, "demibold"), textX, panelY + 34, 19, "demibold");
     auto artist = player.current["artist"].toString();
     if (artist.isEmpty()) {
         artist = "RHINE LAB / MUSIC DATABASE";
     }
-    centeredText(fit(artist, 15, infoWidth), 116, y + 64, 15);
-    hit(28, y + 17, std::max(200.0, center - 280 - 28), 64, "player:open", "当前歌曲 / 播放队列");
-    hit(center - 187, y + 20, 70, 44, "player:mode", "播放模式");
+    text(fit(artist, 12, textW), textX, panelY + 54, 12, "regular", 0, dim);
+
+    // ---- 进度：圆角细条 + 圆头 ----
+    const double duration = player.state["duration"].toDouble();
+    const double position = player.state["position"].toDouble();
+    const double ratio = duration > 0 ? std::min(1.0, std::max(0.0, position / duration)) : 0;
+    const double barX = textX;
+    const double barY = panelY + 64;
+    const double barW = textW;
+    const double barH = 4;
+    op({"fill-path", roundedRect(barX, barY, barW, barH, barH / 2), track});
+    if (ratio > 0) {
+        const double filled = std::max(barH, barW * ratio);
+        op({"fill-path", roundedRect(barX, barY, filled, barH, barH / 2), accent});
+        op({"ellipse", accent, barX + filled - 4, barY - 2.5, 8, 8});
+    }
+    playerSeekRect = QRectF(barX, barY - 8, barW, 20);
+    hit(barX, barY - 8, barW, 20, "player:open", "播放进度");
+    text(clock(position) + " / " + clock(duration), barX + barW + 10, barY + 5, 11, "regular", 0, dim);
+
+    // ---- 控制簇 ----
+    const double ctrlX = width * 0.615;
+    const double ctrlY = panelY + panelH / 2;
+
     static const QHash<QString, QString> modes{
         {"off", "顺序"}, {"all", "循环"}, {"one", "单曲"}, {"shuffle", "随机"}};
-    centeredText(modes.value(player.mode), center - 152, y + 42, 16, "regular", true);
-    hit(center - 99, y + 14, 44, 56, "player:prev", "上一首");
-    const auto cy = y + 42;
-    const QJsonArray icon{0.96, 0.95, 0.91, 1};
-    const auto path = [](std::initializer_list<QPointF> points, bool closed = false) {
-        QString value;
-        for (const auto &point : points) {
-            value += value.isEmpty() ? "M " : " L ";
-            value += QString::number(point.x(), 'g', 16) + " " + QString::number(point.y(), 'g', 16);
-        }
-        if (closed) {
-            value += " Z";
-        }
-        return value;
+    centeredText(modes.value(player.mode), ctrlX - 128, ctrlY, 13, "regular", true);
+    hit(ctrlX - 158, ctrlY - 22, 60, 44, "player:mode", "播放模式");
+
+    // 上一首：两条竖线 + 左侧三角
+    const auto skipIcon = [&](double cx, bool forward) {
+        op({"fill-path", triangle(cx, ctrlY, 18, forward), ink()});
+        const double bar = forward ? cx + 9 : cx - 11;
+        fill(bar, ctrlY - 9, 2.5, 18, ink());
     };
-    op({"path", path({{center - 72, cy - 10}, {center - 82, cy}, {center - 72, cy + 10}}), 3, ink(),
-        QJsonArray{}, 0});
-    op({"path", path({{center + 72, cy - 10}, {center + 82, cy}, {center + 72, cy + 10}}), 3, ink(),
-        QJsonArray{}, 0});
-    op({"ellipse", QJsonArray{119.0 / 255, 123.0 / 255, 96.0 / 255, 1}, center - 29, cy - 29, 58, 58});
-    hit(center - 29, cy - 29, 58, 58, "player:toggle", "播放 / 暂停");
+    skipIcon(ctrlX - 66, false);
+    hit(ctrlX - 88, ctrlY - 24, 44, 48, "player:prev", "上一首");
+
+    // 播放 / 暂停：实心圆 + 图标
+    op({"ellipse", accent, ctrlX - 24, ctrlY - 24, 48, 48});
     if (player.loading) {
         for (int index = -1; index <= 1; ++index) {
-            op({"ellipse", icon, center + index * 9 - 2, cy - 2, 4, 4});
+            op({"ellipse", onAccent, ctrlX + index * 8 - 2, ctrlY - 2, 4, 4});
         }
     } else if (player.state["playing"].toBool()) {
-        fill(center - 9, cy - 11, 6, 22, icon);
-        fill(center + 3, cy - 11, 6, 22, icon);
+        fill(ctrlX - 7, ctrlY - 9, 5, 18, onAccent);
+        fill(ctrlX + 2, ctrlY - 9, 5, 18, onAccent);
     } else {
-        op({"fill-path", path({{center - 10, cy - 12}, {center + 10, cy}, {center - 10, cy + 12}}, true),
-            icon});
+        op({"fill-path", triangle(ctrlX + 2, ctrlY, 18, true), onAccent});
     }
-    hit(center + 55, y + 14, 44, 56, "player:next", "下一首");
-    const auto lyricsX = width * 0.591;
-    centeredText("歌词", lyricsX, cy, 15, lyricsMode ? "demibold" : "regular", true);
-    hit(lyricsX - 27, cy - 23, 54, 46, "player:lyrics", "当前歌曲歌词");
-    centeredText(clock(player.state["position"].toDouble()) + " / " + clock(duration), center, y + 84, 13,
-                 "regular", true);
-    const auto vx = width - 239;
-    playerVolumeRect = QRectF(vx, cy - 24, 86, 48);
-    centeredText("音量", vx - 54, cy, 15);
-    for (int index = 0; index < 10; ++index) {
-        const double height = 6 + index;
-        fill(vx + index * 9, cy - height / 2, 4, height,
-             index / 10.0 < player.state["volume"].toDouble() ? ink() : shade);
+    hit(ctrlX - 28, ctrlY - 28, 56, 56, "player:toggle", "播放 / 暂停");
+
+    skipIcon(ctrlX + 66, true);
+    hit(ctrlX + 44, ctrlY - 24, 44, 48, "player:next", "下一首");
+
+    centeredText("歌词", ctrlX + 132, ctrlY, 13, lyricsMode ? "demibold" : "regular", true);
+    hit(ctrlX + 106, ctrlY - 22, 52, 44, "player:lyrics", "当前歌曲歌词");
+
+    // ---- 音量旋钮：270° 弧（底部留缺口）----
+    const double volX = width - 138;
+    const double volY = ctrlY;
+    const double volR = 15;
+    const double start = 2.356;   // 135°
+    const double sweep = 4.712;   // 270°
+    op({"arc", volX, volY, volR, start, sweep, 3, track});
+    const double volume = std::max(0.0, std::min(1.0, player.state["volume"].toDouble()));
+    if (volume > 0.001) {
+        op({"arc", volX, volY, volR, start, sweep * volume, 3, accent});
     }
-    hit(width - 103, cy - 24, 70, 48, "player:open", "播放队列");
-    centeredText("队列", width - 68, cy, 18, "regular", true);
+    op({"ellipse", ink(), volX - 2.5, volY - 2.5, 5, 5});
+    playerVolumeRect = QRectF(volX - 34, volY - 30, 68, 60);
+    hit(volX - 34, volY - 30, 68, 60, "player:open", "音量");
+
+    centeredText("队列", width - 72, ctrlY, 12, "regular", true);
+    hit(width - 108, ctrlY - 22, 76, 44, "player:open", "播放队列");
+
+    // 底栏所有命中区固定，不随列表滚动
     for (auto index = first; index < hits.size(); ++index) {
         auto value = hits.at(index).toObject();
         value["fixed"] = true;

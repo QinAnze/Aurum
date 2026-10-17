@@ -323,6 +323,18 @@ void Glyphs::commands(QPainter &c, const QJsonArray &commands, std::function<QIm
             if (!img.isNull()) {
                 c.drawImage(QRectF(n(2), n(3), n(4), n(5)), img);
             }
+        } else if (op == "image-circle") {
+            // 圆形封面（唱片）：先按圆裁切再画，边缘交给抗锯齿
+            auto img = image(a[1].toString());
+            if (!img.isNull()) {
+                const QRectF box(n(2), n(3), n(4), n(4));
+                QPainterPath circle;
+                circle.addEllipse(box);
+                c.save();
+                c.setClipPath(circle);
+                c.drawImage(box, img);
+                c.restore();
+            }
         }
     }
 }

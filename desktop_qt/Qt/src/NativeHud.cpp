@@ -190,6 +190,10 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
     playerSeekRect.reset();
     playerVolumeRect.reset();
     motion.sample(time);
+    // 每帧从播放器抽出的 PCM 更新可视化（无音频时自然回落到全零）
+    if (auto *audio = m_host->audioPlayer()) {
+        visual.update(audio->fft(), m_music->player.state.value("playing").toBool(), true);
+    }
     if (closing && motion.finished()) {
         modal.clear();
         closing = false;

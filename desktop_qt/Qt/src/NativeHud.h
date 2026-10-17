@@ -2,6 +2,7 @@
 #include "Glyphs.h"
 #include "MusicLibrary.h"
 #include "UiMotion.h"
+#include "aurum/AurumVisual.h"
 #include <QCache>
 #include <QPointF>
 #include <QRectF>
@@ -82,6 +83,8 @@ class NativeHud : public QObject {
     UiMotion::SurfaceMotion motion;
     std::optional<QRectF> playerSeekRect;
     std::optional<QRectF> playerVolumeRect;
+    /// Aurum 可视化状态（频谱 120 段 + climax），每帧从播放器的 PCM 更新
+    AurumVisual visual;
 
   private:
     struct LyricRow {

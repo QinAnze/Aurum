@@ -23,6 +23,8 @@ class Host : public QObject {
     void schedule(int ms, std::function<void()> callback);
     void loadCover(QString url, TextReply callback);
     void playOfficial(QString id, TextReply callback);
+    /// 可视化（频谱 / 高潮因子）要读播放器抽出的 PCM；无音频时为 nullptr
+    AudioPlayer *audioPlayer() { return audio.get(); }
     Q_INVOKABLE void invalidate() {
         emit invalidated();
     }
