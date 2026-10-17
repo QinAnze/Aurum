@@ -1,0 +1,17 @@
+# 构建产物与本地打包（不入库）
+/output/
+/dist/
+/qt-build/
+
+# 桥接依赖（npm ci 生成，构建时按 package-lock 还原）
+MusicBridge/node_modules/
+Resources/node_modules/
+
+# 编辑器 / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log

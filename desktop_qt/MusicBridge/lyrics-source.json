@@ -1,0 +1,14 @@
+{
+    "project": "LyricsKit",
+    "url": "https://github.com/MxIris-LyricsX-Project/LyricsKit",
+    "revision": "bb255842eb8fe48880e15c23c0a7704599dd3504",
+    "license": "MPL-2.0",
+    "adaptedFiles": [
+        "Sources/LyricsCore/Lyrics.swift",
+        "Sources/LyricsCore/RegexPattern.swift",
+        "Sources/LyricsService/Parser/NetEaseKLyricParser.swift",
+        "Sources/LyricsService/Parser/KugouKrcParser.swift"
+    ],
+    "target": "lyrics-format.cjs",
+    "note": "JavaScript port using absolute millisecond lines and optional words; upstream API packages retain decoding and protocol responsibilities."
+}
