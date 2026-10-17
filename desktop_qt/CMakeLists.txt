@@ -244,6 +244,7 @@ if(APPLE AND RHINE_PACKAGE_APP)
         VERBATIM)
 endif()
 qt_finalize_executable(RhineMusicDatabase)
+
 enable_testing()
 qt_add_executable(RhineSceneMotionRegression Qt/tests/SceneMotionChecks.cpp Qt/src/SceneMotion.cpp
                   Qt/src/BootTimeline.cpp Qt/src/SceneMath.cpp Qt/src/SceneDrag.cpp)
