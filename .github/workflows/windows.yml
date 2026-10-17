@@ -1,0 +1,97 @@
+name: Windows
+
+# CI：每次 push / PR 都跑静态检查、单测、Release 构建，产出可下载的 zip。
+# CD：打 v* 标签时，把同一份 zip 挂到 GitHub Release 上。
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write # 打标签时创建 Release 需要
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: 3.47.7
+
+jobs:
+  build:
+    name: Build · Windows x64
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: aurum_flutter
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      # 版本号唯一来源是 pubspec.yaml（Flutter 会把它写进 exe 的文件属性）
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          $m = Select-String -Path pubspec.yaml -Pattern '^version:\s*([0-9]+\.[0-9]+\.[0-9]+)' |
+               Select-Object -First 1
+          if (-not $m) { throw 'version not found in pubspec.yaml' }
+          $v = $m.Matches[0].Groups[1].Value
+          "value=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Aurum $v"
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      - name: flutter analyze
+        run: flutter analyze
+
+      - name: flutter test
+        run: flutter test
+
+      - name: flutter build windows --release
+        run: flutter build windows --release
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $src = 'build/windows/x64/runner/Release'
+          if (-not (Test-Path $src)) { throw "build output missing: $src" }
+          $name = "Aurum-${{ steps.version.outputs.value }}-windows-x64"
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path "$src/*" -DestinationPath "dist/$name.zip" -CompressionLevel Optimal
+
+          # 断言：压缩包里确实有主程序，避免发出空包
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path "dist/$name.zip"))
+          $hasExe = @($zip.Entries | Where-Object { $_.Name -eq 'aurum.exe' }).Count -gt 0
+          $zip.Dispose()
+          if (-not $hasExe) { throw 'aurum.exe not found in archive' }
+
+          $mb = [math]::Round((Get-Item "dist/$name.zip").Length / 1MB, 1)
+          Write-Host "packaged dist/$name.zip ($mb MB)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Aurum-windows-x64
+          path: aurum_flutter/dist/*.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      # CD：只有打标签才发 Release（普通 push 只上传 artifact）
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: aurum_flutter/dist/*.zip
+          generate_release_notes: true
+          fail_on_unmatched_files: true

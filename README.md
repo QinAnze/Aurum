@@ -6,6 +6,10 @@
 
 > 封面取色的液态玻璃面板、360° 频谱环、重力词云 —— 同一套视觉语言的两种实现。
 
+[![Windows](https://github.com/QinAnze/Aurum/actions/workflows/windows.yml/badge.svg)](https://github.com/QinAnze/Aurum/actions/workflows/windows.yml)
+![version](https://img.shields.io/badge/version-0.1.0-c9a06a)
+![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-7fa693)
+
 </div>
 
 ## 两个版本
@@ -16,6 +20,14 @@
 | **桌面版** | `aurum_flutter/` | Flutter 3.47 · Dart 3.13 · flutter_soloud | 本地音乐库、离线播放、持续 60fps 特效 |
 
 两版共享同一套设计语言与动画参数（`index.html` 是原生实现，Flutter 版是逐项对齐的移植）。
+
+## 下载（桌面版 0.1.0）
+
+到 [Releases](https://github.com/QinAnze/Aurum/releases) 下载 `Aurum-0.1.0-windows-x64.zip`，
+解压后双击 `aurum.exe` 即可 —— 目录内已含 Flutter 运行时与全部插件 DLL，无需安装。
+
+> 未签名的个人项目，Windows 首次运行可能提示「已保护你的电脑」，
+> 点「更多信息 → 仍要运行」。
 
 ## 特性
 
@@ -99,6 +111,39 @@ flutter run -d windows
 ```bash
 cd aurum_flutter
 flutter test          # 89 项：分词 / 歌词 / 时长探测 / 频谱标度 / 切歌并发 / 取色 / 本地库 / 内嵌标签
+```
+
+## CI / 发布
+
+[`.github/workflows/windows.yml`](.github/workflows/windows.yml)：
+
+| 触发 | 动作 |
+| --- | --- |
+| push `main` / PR / 手动 | `pub get` → `analyze` → `test` → `build windows --release` → 打包 zip 上传为 artifact（保留 30 天） |
+| 打 `v*` 标签 | 在上一行基础上，把同一个 zip 挂到 GitHub Release |
+
+版本号只在 `aurum_flutter/pubspec.yaml` 里改（`version: 0.1.0+1`），Flutter 会把它写进
+exe 的文件属性（FileVersion / ProductVersion），CI 也从这里读出来给压缩包命名。
+
+发版流程：
+
+```bash
+# 1) 改 aurum_flutter/pubspec.yaml 的 version
+# 2) 提交
+git add -A && git commit -m "chore: 发布 0.1.0"
+# 3) 打标签并推送（标签由仓库维护者自行打）
+git tag v0.1.0 && git push origin main --tags
+```
+
+构建产物名：`Aurum-<version>-windows-x64.zip`（解压即用，含 `aurum.exe` + 运行时 DLL + `data/`）。
+
+本地不想等 CI 时：
+
+```bash
+cd aurum_flutter
+flutter build windows --release
+Compress-Archive -Path "build/windows/x64/runner/Release/*" `
+  -DestinationPath "dist/Aurum-0.1.0-windows-x64.zip"
 ```
 
 ## 版权

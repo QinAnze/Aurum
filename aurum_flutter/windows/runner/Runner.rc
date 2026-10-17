@@ -90,12 +90,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "xyz.aurum" "\0"
-            VALUE "FileDescription", "aurum" "\0"
+            VALUE "FileDescription", "Aurum - Liquid Glass Music Player" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "aurum" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 xyz.aurum. All rights reserved." "\0"
             VALUE "OriginalFilename", "aurum.exe" "\0"
-            VALUE "ProductName", "aurum" "\0"
+            VALUE "ProductName", "Aurum" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END
