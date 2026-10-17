@@ -46,104 +46,23 @@ void NativeHud::detail(double width, double opacity) {
         container(width, opacity);
         return;
     }
-    const auto x = width * 0.56;
     if (lyricsMode && MusicPlayer::identity(item) != MusicPlayer::identity(music.player.current)) {
         lyricsMode = false;
     }
-    const auto usable = width - x - 59;
-    constexpr double gap = 12;
-    const auto buttonWidth = (usable - gap * 2) / 3;
     save();
     alpha(opacity);
-    if (!lyricsMode) {
-        fill(x - 24, 260, usable + 48, 696,
-             dark ? QJsonArray{0.08, 0.095, 0.09, 0.96} : QJsonArray{0.929, 0.922, 0.894, 0.96});
-    }
+    // 左侧 Rhine 原样 chrome：返回 / 标签 / 查看封面
     button("← 返回资料库   ESC", 59, 211, 360, 54, "back", 20, "demibold");
     limited(item["id"].toString(), 60, 845, 37, 330);
     text("MUSIC DATABASE", 60, 893, 10);
     text("DRAG TO INSPECT", 60, 917, 10);
     button("查看封面 ↗", 60, 944, 260, 35, "viewer", 14);
-    if (lyricsMode) {
-        lyricsPanel(x, usable);
-        restore();
-        return;
-    }
-    text("SONG ID / " + item["id"].toString(), x, 278, 12);
-    const auto titleLines = m_glyphs->wrap(item["title"].toString(), usable, 32);
-    for (int index = 0; index < std::min(2, int(titleLines.size())); ++index) {
-        auto line = titleLines.at(index);
-        if (index == 1 && titleLines.size() > 2) {
-            line += "…";
-        }
-        limited(line, x, 305 + index * 40, 32, usable, "bold");
-    }
-    limited(item["artist"].toString(), x, 394, 19, usable, "demibold");
-    if (music.editable()) {
-        const bool liked = (music.likedIDs && MusicData::indexOf(*music.likedIDs, item["id"]) >= 0) ||
-                           MusicData::indexOfId(music.lists[1], item["id"].toString()) >= 0;
-        actionButton(liked ? "♥ 已喜欢" : "♡ 喜欢", x, 436, buttonWidth, "music:like");
-        actionButton("加入歌单", x + buttonWidth + gap, 436, buttonWidth, "music:add-to-playlist");
-    }
-    if (!item["artists"].toArray().isEmpty()) {
-        actionButton("歌手作品 ↗", x + (buttonWidth + gap) * 2, 436, buttonWidth, "music:artist:0");
-    }
-    actionButton("▶ 面板内播放", x, 498, buttonWidth, "music:play", true);
-    actionButton("加入队列", x + buttonWidth + gap, 498, buttonWidth, "music:enqueue");
-    actionButton("下一首播放", x + (buttonWidth + gap) * 2, 498, buttonWidth, "music:play-next");
-    rule(x, 565, usable, 0.4);
-    const auto column = (usable - gap) / 2;
-    const QVector<QPair<QString, QString>> meta{{"ARTIST / 歌手", item["artist"].toString()},
-                                                {"ALBUM / 专辑", item["album"].toString()},
-                                                {"DURATION / 时长", MusicData::time(item)},
-                                                {"PLAYBACK / 播放方式", "面板内播放 / 官方入口"}};
-    for (int index = 0; index < meta.size(); ++index) {
-        const auto xx = x + (index % 2) * (column + gap);
-        const auto yy = 584 + (index / 2) * 64;
-        text(meta.at(index).first, xx, yy, 11);
-        const auto value = meta.at(index).second;
-        limited(value.isEmpty() ? "暂无" : value, xx, yy + 23, 16, column - 12);
-    }
-    const QStringList keys{"overview", "notes", "history"};
-    const QStringList labels{"歌曲百科", "专辑信息", "同专辑"};
-    for (int index = 0; index < keys.size(); ++index) {
-        const auto xx = x + index * usable / 3;
-        button(labels.at(index), xx, 720, usable / 3 - 12, 38, "tab:" + keys.at(index), 15);
-        if (tab == keys.at(index)) {
-            rule(xx, 760, usable / 3 - 24, 1);
-        }
-    }
-    rule(x, 762, usable, 0.2);
-    if (tab == "history") {
-        const auto songs = MusicData::slice(music.tracks, trackOffset, 2);
-        for (int index = 0; index < songs.size(); ++index) {
-            const auto song = songs.at(index).toObject();
-            const auto yy = 790 + index * 48;
-            text(MusicData::pad(trackOffset + index + 1), x, yy, 11);
-            limited(song["title"].toString() + " / " + song["artist"].toString(), x + 35, yy, 16,
-                    usable - 115);
-            text(MusicData::time(song), x + usable - 65, yy, 12);
-            rule(x, yy + 36, usable, 0.2);
-            hit(x, yy - 4, usable, 42, "music:track:" + QString::number(trackOffset + index),
-                song["title"].toString());
-        }
-        if (music.tracks.isEmpty()) {
-            text(music.detailLoading ? "正在载入曲目…" : "暂无曲目信息", x, 790, 17);
-        }
-    } else {
-        const auto lines = m_glyphs->wrap(body(), usable, 16);
-        bodyOffset = std::min(bodyOffset, std::max(0, int(lines.size()) - 3));
-        for (int index = 0; index < std::min(3, int(lines.size()) - bodyOffset); ++index) {
-            text(lines.at(bodyOffset + index), x, 790 + index * 31, 16);
-        }
-    }
-    actionButton(music.provider != "netease" ? music.providerName() + " ↗" : "官方客户端 ↗", x, 910,
-                 buttonWidth, "music:official");
-    if (music.editable() && music.directory && !music.uid.isEmpty() &&
-        music.directory->item["creatorID"] == music.uid) {
-        actionButton("从歌单移除", x + (buttonWidth + gap) * 2, 910, buttonWidth, "music:remove-track");
-    }
     restore();
+    // 左：Rhine 光盘盒（CD 套 + 露出的黑胶碟）
+    aurumDetailLeft(59, 250, width * 0.50 - 59, 700);
+    // 右：Aurum 竖屏播放器（封面旋转 + 频谱环 + 歌名发光 + 进度 + 控件）
+    const double rx = width * 0.54;
+    aurumNowPlaying(rx, 250, width - 59 - rx, 700);
 }
 
 /** 歌词换文档或宽度时排版；进度更新只采样原生曲线并绘制可见行。 */

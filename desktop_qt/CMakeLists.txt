@@ -106,6 +106,11 @@ set(RHINE_APP_SOURCES
     Qt/src/aurum/FftTap.h
     Qt/src/aurum/AurumVisual.cpp
     Qt/src/aurum/AurumVisual.h
+    Qt/src/aurum/AurumSpectrum.cpp
+    Qt/src/aurum/AurumSpectrum.h
+    Qt/src/aurum/AurumWordCloud.cpp
+    Qt/src/aurum/AurumWordCloud.h
+    Qt/src/NativeHudAurum.cpp
     vendor/qrcodegen/qrcodegen.cpp)
 list(TRANSFORM RHINE_APP_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
 if(APPLE)

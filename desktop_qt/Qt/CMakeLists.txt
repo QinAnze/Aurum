@@ -41,6 +41,34 @@ if(WIN32)
         message(WARNING "未找到 windeployqt，产物无法独立运行；请把 Qt 的 bin 加入 PATH")
     endif()
 
+    # windeployqt 只带当前应用类型对应的平台插件（Windows 下是 qwindows），
+    # 而 ctest 的离线自检跑在 QT_QPA_PLATFORM=offscreen 上，缺它就整体失败。
+    # 这里按 Debug/Release 补齐 offscreen 插件，与 npm 打包脚本的做法一致。
+    if(EXISTS "${_rhine_qt_bin}/../plugins/platforms/qoffscreen.dll")
+        add_custom_command(
+            TARGET RhineMusicDatabase
+            POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E make_directory
+                    "$<TARGET_FILE_DIR:RhineMusicDatabase>/platforms"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    "${_rhine_qt_bin}/../plugins/platforms/qoffscreen.dll"
+                    "$<TARGET_FILE_DIR:RhineMusicDatabase>/platforms"
+            COMMENT "部署 offscreen 平台插件（ctest 离线自检需要）"
+            VERBATIM)
+    endif()
+    if(EXISTS "${_rhine_qt_bin}/../plugins/platforms/qoffscreend.dll")
+        add_custom_command(
+            TARGET RhineMusicDatabase
+            POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E make_directory
+                    "$<TARGET_FILE_DIR:RhineMusicDatabase>/platforms"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    "${_rhine_qt_bin}/../plugins/platforms/qoffscreend.dll"
+                    "$<TARGET_FILE_DIR:RhineMusicDatabase>/platforms"
+            COMMENT "部署 offscreen 平台插件（Debug，ctest 离线自检需要）"
+            VERBATIM)
+    endif()
+
     foreach(_rhine_dll Qt6Core Qt6Gui Qt6Qml Qt6QmlMeta Qt6QmlModels Qt6QmlWorkerScript
                       Qt6Quick Qt6Quick3DUtils Qt6Network Qt6Multimedia Qt6Svg Qt6OpenGL)
         if(EXISTS "${_rhine_qt_bin}/${_rhine_dll}.dll")

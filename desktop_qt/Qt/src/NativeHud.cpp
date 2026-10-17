@@ -28,6 +28,9 @@ void NativeHud::translate(double x, double y) {
 void NativeHud::scale(double x, double y) {
     op({"scale", x, y});
 }
+void NativeHud::rotate(double angle) {
+    op({"rotate", angle});
+}
 void NativeHud::clip(double x, double y, double width, double height) {
     op({"clip", x, y, width, height});
 }
@@ -190,6 +193,20 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
     playerSeekRect.reset();
     playerVolumeRect.reset();
     motion.sample(time);
+    // 词云字形测量（注入 Glyphs::width）
+    aurumCloud.setMeasure([this](const QString &t, double s) { return m_glyphs->width(t, s, "bold"); });
+    // 封面旋转角：播放时持续转动，暂停保留角度
+    if (m_coverLastTime < 0) {
+        m_coverLastTime = time;
+    }
+    const double dt = time - m_coverLastTime;
+    m_coverLastTime = time;
+    if (m_music->player.state.value("playing").toBool()) {
+        m_coverAngle += dt * (6.283185307179586 / 16.0); // 360° / 16s
+        if (m_coverAngle > 6.283185307179586) {
+            m_coverAngle -= 6.283185307179586;
+        }
+    }
     // 每帧从播放器抽出的 PCM 更新可视化（无音频时自然回落到全零）
     if (auto *audio = m_host->audioPlayer()) {
         visual.update(audio->fft(), m_music->player.state.value("playing").toBool(), true);
@@ -219,6 +236,10 @@ void NativeHud::draw(QJsonObject next, double stageWidth, double time) {
     }
     if (frame["mode"] != "boot") {
         playerBar(0, 984, width);
+    }
+    // 整窗词云图层：仅在详情/歌词上下文，飘过整个窗口（含 3D 唱片架与播放条）
+    if (frame["mode"] == "detail" || lyricsMode) {
+        aurumWordCloud(width, 1080.0, visual.climax());
     }
 }
 void NativeHud::brand() {

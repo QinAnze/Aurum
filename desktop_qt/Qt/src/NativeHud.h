@@ -3,6 +3,7 @@
 #include "MusicLibrary.h"
 #include "UiMotion.h"
 #include "aurum/AurumVisual.h"
+#include "aurum/AurumWordCloud.h"
 #include <QCache>
 #include <QPointF>
 #include <QRectF>
@@ -85,6 +86,8 @@ class NativeHud : public QObject {
     std::optional<QRectF> playerVolumeRect;
     /// Aurum 可视化状态（频谱 120 段 + climax），每帧从播放器的 PCM 更新
     AurumVisual visual;
+    /// Aurum 词云（整窗图层），生命周期与歌词时间轴绑定
+    aurum::WordCloud aurumCloud;
 
   private:
     struct LyricRow {
@@ -130,6 +133,7 @@ class NativeHud : public QObject {
     void alpha(double value);
     void translate(double x, double y);
     void scale(double x, double y);
+    void rotate(double angle);
     void clip(double x, double y, double width, double height);
     void fill(double x, double y, double width, double height, QJsonArray color = {});
     void text(QString value, double x, double y, double size, QString weight = "regular", double tracking = 0,
@@ -164,6 +168,16 @@ class NativeHud : public QObject {
     QString body() const;
     void container(double width, double opacity);
     void viewer(double width);
+    // ---- Aurum 融合（Phase 4）：左光盘盒 + 右竖屏播放器 + 整窗词云 ----
+    void aurumDetailLeft(double x, double y, double width, double height); // 左侧 Rhine 光盘盒
+    void aurumNowPlaying(double x, double y, double width, double height);  // 右侧 Aurum 竖屏播放器
+    void aurumCover(double cx, double cy, double size, const QString &key, bool spinning, double climax,
+                    bool oc);
+    void aurumSpectrumRing(double cx, double cy, double coverWidth, double climax, bool oc);
+    void aurumWordCloud(double width, double height, double climax); // 整窗词云图层
+    double m_coverAngle = 0; // 封面旋转角（弧度）
+    double m_coverLastTime = -1;
+    QRectF m_aurumCoverRect; // 右竖屏封面舞台坐标（供词云避让）
     std::array<double, 2> rowMotion(const QString &signature, int index);
     void modalDraw(double width);
     void loginPanel(double x, double y, double width);

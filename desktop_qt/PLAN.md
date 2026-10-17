@@ -93,8 +93,12 @@ desktop_qt/
 - 验收：与 Aurum 底部条视觉一致；拖动进度 1:1 跟手
 
 ### Phase 4 · 竖屏播放器（点开光盘盒后）
-- `AurumNowPlaying`：大封面（旋转）+ 歌名发光 + 词云 + 频谱环 + 进度 + 控件
-- 从光盘盒点击进入 / ESC 或返回键退出，转场沿用 Rhine 的 HUD 过渡节奏
+- [x] `AurumNowPlaying`：大封面（旋转）+ 歌名发光 + 词云 + 频谱环 + 进度 + 控件
+- [x] 从光盘盒点击进入 / ESC 或返回键退出，转场沿用 Rhine 的 HUD 过渡节奏
+- [x] 左 Rhine 光盘盒 + 右 Aurum 竖屏播放器同屏分栏（`NativeHudDetail.cpp::detail`）
+- [x] 整窗词云图层：`aurum/AurumWordCloud`（移植 word_cloud.dart，歌词时间轴入场、
+      碰撞检测 + 封面圆禁区、句末两词放大、竖排选项）
+- [x] 频谱环：`aurum/AurumSpectrum`（移植 spectrum_ring.dart，相邻中点二次贝塞尔闭合环）
 - 验收：词云按歌词时间轴入场；频谱环随音乐脉动；climax 时封面抖动 + 歌名发光
 
 ### Phase 5 · 收尾
