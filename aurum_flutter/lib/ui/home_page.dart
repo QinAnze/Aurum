@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../effects/edge_light.dart';
+import '../effects/pitch_badge.dart';
 import '../effects/viz_controller.dart';
 import '../effects/word_cloud.dart';
 import '../state/app_state.dart';
@@ -158,6 +159,8 @@ class _HomePageState extends State<HomePage> {
                 ],
                 // kick 打光：整窗四周的光圈（在面板之上、抽屉/Toast 之下）
                 if (app.fxOn) _edgeLight(),
+                // 音高字母：顶层，蹦在封面正中
+                if (app.fxOn) _pitchBadge(),
                 // Toast
                 Toast(message: app.toastMsg, visible: app.toastVisible),
               ],
@@ -212,6 +215,22 @@ class _HomePageState extends State<HomePage> {
           level: _viz.kick.env,
           c1: widget.app.c1,
           c2: widget.app.c2,
+        ),
+      ),
+    );
+  }
+
+  /* ---------------- 音高字母层 ---------------- */
+  /// 长间隙里检测到的最高音（E5），顶层覆盖在封面中央
+  Widget _pitchBadge() {
+    return Positioned.fill(
+      child: AnimatedBuilder(
+        animation: _viz,
+        builder: (_, __) => PitchBadge(
+          note: _viz.pitchVisible ? _viz.pitch.note : null,
+          revision: _viz.pitch.revision,
+          rect: _viz.coverRect,
+          c1: widget.app.c1,
         ),
       ),
     );

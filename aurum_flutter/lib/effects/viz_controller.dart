@@ -16,6 +16,7 @@ import 'package:flutter/scheduler.dart';
 import '../../audio/player_engine.dart';
 import '../../models.dart';
 import 'kick_detector.dart';
+import 'pitch_detector.dart';
 import 'spectrum_ring.dart' show kSpecN;
 import 'word_cloud.dart';
 
@@ -46,6 +47,13 @@ class VizController extends ChangeNotifier implements TickerProvider {
   /// 底鼓检测器：中低频快速冲击 → 窗口四周打光（kick.env 即强度包络）
   final KickDetector kick = KickDetector();
 
+  /// 音高检测器：两句歌词间隔 >10s 的窗口里，取最高的高音响度音
+  /// （lead / guitar / pluck / color bass），以 E5 形式蹦在封面中间
+  final PitchDetector pitch = PitchDetector();
+
+  /// 当前所处的长间隙起点（秒）；null = 不在间隙窗口里
+  double? _pitchGapStart;
+
   /// 封面绑定抖动（px / deg）
   double shakeDx = 0, shakeDy = 0, shakeRot = 0;
 
@@ -75,6 +83,12 @@ class VizController extends ChangeNotifier implements TickerProvider {
 
   /// 由封面 widget 回填其全局矩形（词云封面圆禁区）
   void setCoverRect(Rect? rect) => _coverRect = rect;
+
+  /// 封面全局矩形（音高字母落点）
+  Rect? get coverRect => _coverRect;
+
+  /// 是否该显示音高字母：在长间隙窗口内且已锁定到音
+  bool get pitchVisible => _pitchGapStart != null && pitch.note != null;
 
   @override
   Ticker createTicker(TickerCallback onTick) => Ticker(onTick);
@@ -130,6 +144,27 @@ class VizController extends ChangeNotifier implements TickerProvider {
        数据源用 wave（时域、线性幅度）：fft 是 dB 归一化 0..1，低频段
        长期饱和在 1.0，判不了冲击（详见 kick_detector 顶部注释）。 */
     kick.update(real ? wave : null, dt, active: oc && playing && real);
+
+    /* ---- 音高检测：只在「两句歌词间隔 >10s」的窗口里跑 ---- */
+    if (oc) {
+      final gap = longGapAt(lyrics(), engine.positionSec);
+      if (gap == null) {
+        if (_pitchGapStart != null) {
+          _pitchGapStart = null;
+          pitch.reset();
+        }
+      } else {
+        if (_pitchGapStart != gap.start) {
+          _pitchGapStart = gap.start;
+          pitch.reset();
+        }
+        // 暂停时不更新检测，但已锁定的音保留（字母继续停在封面中间）
+        if (playing && real) pitch.update(wave, active: true);
+      }
+    } else {
+      _pitchGapStart = null;
+      pitch.reset();
+    }
 
     /* ---- 高潮因子：峰值保持 + 相对阈值（intro 安静不抖，drop 持续抖）---- */
     if (oc) {
@@ -272,6 +307,8 @@ class VizController extends ChangeNotifier implements TickerProvider {
       cloudJx = 0;
       cloudJy = 0;
       kick.reset();
+      _pitchGapStart = null;
+      pitch.reset();
       notifyListeners();
       return;
     }
