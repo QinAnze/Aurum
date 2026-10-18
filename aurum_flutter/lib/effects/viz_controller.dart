@@ -15,6 +15,7 @@ import 'package:flutter/scheduler.dart';
 
 import '../../audio/player_engine.dart';
 import '../../models.dart';
+import 'kick_detector.dart';
 import 'spectrum_ring.dart' show kSpecN;
 import 'word_cloud.dart';
 
@@ -41,6 +42,9 @@ class VizController extends ChangeNotifier implements TickerProvider {
   /* ---------------- 对外暴露的逐帧状态 ---------------- */
   double climax = 0;
   final List<double> specVals = List.filled(kSpecN, 0.0);
+
+  /// 底鼓检测器：中低频快速冲击 → 窗口四周打光（kick.env 即强度包络）
+  final KickDetector kick = KickDetector();
 
   /// 封面绑定抖动（px / deg）
   double shakeDx = 0, shakeDy = 0, shakeRot = 0;
@@ -92,6 +96,7 @@ class VizController extends ChangeNotifier implements TickerProvider {
     if (isPlaying() || engine.isPlaying) return true;
     if (fxOn()) return true; // 频谱/词云开着就持续渲染
     if (climax >= 0.02) return true; // 高潮余韵
+    if (kick.env >= 0.01) return true; // 打光余晖还要淡出
     if (cloud.hasActive) return true; // 词还在坠落
     return false;
   }
@@ -120,6 +125,11 @@ class VizController extends ChangeNotifier implements TickerProvider {
       }
       real = sum > 0;
     }
+
+    /* ---- 底鼓检测：只在播放 + 特效开关打开时判，否则让包络自然回落 ----
+       数据源用 wave（时域、线性幅度）：fft 是 dB 归一化 0..1，低频段
+       长期饱和在 1.0，判不了冲击（详见 kick_detector 顶部注释）。 */
+    kick.update(real ? wave : null, dt, active: oc && playing && real);
 
     /* ---- 高潮因子：峰值保持 + 相对阈值（intro 安静不抖，drop 持续抖）---- */
     if (oc) {
@@ -261,6 +271,7 @@ class VizController extends ChangeNotifier implements TickerProvider {
       cloudScale = 1;
       cloudJx = 0;
       cloudJy = 0;
+      kick.reset();
       notifyListeners();
       return;
     }

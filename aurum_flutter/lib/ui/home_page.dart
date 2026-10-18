@@ -7,6 +7,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../effects/edge_light.dart';
 import '../effects/viz_controller.dart';
 import '../effects/word_cloud.dart';
 import '../state/app_state.dart';
@@ -155,6 +156,8 @@ class _HomePageState extends State<HomePage> {
                   _scrim(),
                   _drawer(),
                 ],
+                // kick 打光：整窗四周的光圈（在面板之上、抽屉/Toast 之下）
+                if (app.fxOn) _edgeLight(),
                 // Toast
                 Toast(message: app.toastMsg, visible: app.toastVisible),
               ],
@@ -195,6 +198,21 @@ class _HomePageState extends State<HomePage> {
             ),
           );
         },
+      ),
+    );
+  }
+
+  /* ---------------- kick 打光层 ---------------- */
+  /// 底鼓响起时整窗四周亮一圈（只在特效开关打开时挂载）
+  Widget _edgeLight() {
+    return Positioned.fill(
+      child: AnimatedBuilder(
+        animation: _viz,
+        builder: (_, __) => EdgeLight(
+          level: _viz.kick.env,
+          c1: widget.app.c1,
+          c2: widget.app.c2,
+        ),
       ),
     );
   }
