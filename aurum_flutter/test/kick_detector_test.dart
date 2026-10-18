@@ -43,6 +43,17 @@ void main() {
     expect(hit, isTrue, reason: '60Hz 的快速冲击应当触发');
   });
 
+  test('150–250Hz 的 kick（电子/trap 主峰）也能触发', () {
+    final k = KickDetector();
+    _warmUp(k);
+    var hit = false;
+    for (final amp in [0.05, 0.15, 0.35]) {
+      final h = k.update(_wave(amp: amp, hz: 200), _dt);
+      hit = h || hit;
+    }
+    expect(hit, isTrue, reason: '低通放宽到 300Hz 后，200Hz 的 kick 不该漏');
+  });
+
   test('不应期内不重复触发（一次鼓点只亮一次）', () {
     final k = KickDetector();
     _warmUp(k);

@@ -20,19 +20,21 @@ import 'dart:typed_data';
 
 class KickDetector {
   KickDetector({
-    this.cutoffHz = 130,
+    this.cutoffHz = 300,
     this.sampleRate = 44100,
-    this.ratio = 1.45,
-    this.riseRatio = 1.10,
+    this.ratio = 1.35,
+    this.riseRatio = 1.06,
     this.peakFloor = 0.075,
     this.absFloor = 2e-3,
-    this.refractory = 0.11,
+    this.refractory = 0.10,
     this.envTau = 0.13,
     this.baselineTau = 0.40,
     this.warmupFrames = 20,
   });
 
-  /// 低通截止频率（两级一阶 ≈ 12dB/oct）
+  /// 低通截止频率（两级一阶 ≈ 12dB/oct）。
+  /// 取 300Hz：底鼓主体 50–100Hz，而不少电子乐/trap 的 kick 主峰在
+  /// 150–250Hz，130Hz 会把它们削掉；贝斯的少量泄漏可以接受。
   final double cutoffHz;
   final double sampleRate;
 
