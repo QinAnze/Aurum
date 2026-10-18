@@ -31,46 +31,6 @@ class _SidebarState extends State<Sidebar> {
   Timer? _debounce;
   bool _hasText = false;
 
-  /// 入场动画闸门：列表本次出现后、用户开始滚动前为 true。
-  ///
-  /// ListView.builder 会销毁滚出缓存区的行，滚回来时按新行重建 State，
-  /// 而行级 stagger 入场写在 initState 里——不设闸门的话，滚动长列表时
-  /// 每个新行都会从 opacity 0 重新淡入（还要先等最多 420ms 延迟），
-  /// 整屏都是看不见的行：用户点到的行与看到的行对不上，
-  /// 表现为「点后面的歌位置不正常，鼠标必须等歌飘出来才能点」。
-  /// 在线列表 ≤24 行基本不滚，所以只有本地长列表暴露。
-  bool _entranceOpen = true;
-  String _listSignature = '';
-
-  /// 列表身份：视图 + 长度 + 首行 id。换搜索/导入/清空/切视角都算新列表。
-  String _signature() {
-    final app = widget.app;
-    final list = app.tracks;
-    return '${app.tab}#${list.length}#${list.isEmpty ? '' : list.first.id}';
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _listSignature = _signature();
-  }
-
-  @override
-  void didUpdateWidget(Sidebar oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    final sig = _signature();
-    if (sig != _listSignature) {
-      _listSignature = sig;
-      _entranceOpen = true; // 新列表：重新放进入场（仅首屏那一批）
-    }
-  }
-
-  /// 一滚动就关上入场闸门：之后回收重建的行不再重放动画。
-  bool _onListScroll(ScrollNotification n) {
-    if (_entranceOpen) setState(() => _entranceOpen = false);
-    return false;
-  }
-
   @override
   void dispose() {
     _debounce?.cancel();
@@ -165,35 +125,29 @@ class _SidebarState extends State<Sidebar> {
           Expanded(
             child: app.tracks.isEmpty
                 ? _ListEmpty(local: app.tab == LibraryTab.local)
-                : NotificationListener<ScrollNotification>(
-                    onNotification: _onListScroll,
-                    child: ListView.builder(
-                      padding: const EdgeInsets.only(right: 2),
-                      itemCount: app.tracks.length,
-                      itemBuilder: (context, i) {
-                        final t = app.tracks[i];
-                        final cur = app.current;
-                        return _TrackRow(
-                          key: ValueKey('${t.source}-${t.id}-$i'),
-                          track: t,
-                          index: i,
-                          // 按「歌源 + id」比对而不是比 index：切视图后 index
-                          // 指向的是另一份列表，用 index 会高亮错误的行。
-                          isCurrent: cur != null &&
-                              cur.id == t.id &&
-                              cur.source == t.source,
-                          isPlaying: app.playing,
-                          onTap: () {
-                            app.playAt(i);
-                            widget.onTrackTap?.call();
-                          },
-                          c1: app.c1,
-                          // 只有「列表刚出现、还没滚过」的首屏行播放入场动画；
-                          // 滚动回收重建的行直接就位（见 _entranceOpen 注释）。
-                          animate: _entranceOpen,
-                        );
-                      },
-                    ),
+                : ListView.builder(
+                    padding: const EdgeInsets.only(right: 2),
+                    itemCount: app.tracks.length,
+                    itemBuilder: (context, i) {
+                      final t = app.tracks[i];
+                      final cur = app.current;
+                      return _TrackRow(
+                        key: ValueKey('${t.source}-${t.id}-$i'),
+                        track: t,
+                        index: i,
+                        // 按「歌源 + id」比对而不是比 index：切视图后 index
+                        // 指向的是另一份列表，用 index 会高亮错误的行。
+                        isCurrent: cur != null &&
+                            cur.id == t.id &&
+                            cur.source == t.source,
+                        isPlaying: app.playing,
+                        onTap: () {
+                          app.playAt(i);
+                          widget.onTrackTap?.call();
+                        },
+                        c1: app.c1,
+                      );
+                    },
                   ),
           ),
         ],
@@ -616,7 +570,6 @@ class _TrackRow extends StatefulWidget {
     required this.isPlaying,
     required this.onTap,
     required this.c1,
-    this.animate = true,
   });
 
   final Track track;
@@ -626,10 +579,6 @@ class _TrackRow extends StatefulWidget {
   final VoidCallback onTap;
   /// 主题主色（均衡器渐变用，随封面取色变化）
   final Color c1;
-  /// 是否播放入场动画。ListView 滚动时回收重建的行必须为 false：
-  /// 行级 stagger 若在 initState 无条件的排，回收行会从 opacity 0 重新淡入
-  /// （先等最多 420ms），滚动长列表时整屏是看不见的行。
-  final bool animate;
 
   @override
   State<_TrackRow> createState() => _TrackRowState();
@@ -640,34 +589,17 @@ class _TrackRowState extends State<_TrackRow>
   late final AnimationController _in = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 320),
-    // 不播放入场：直接满状态，绝不能留在 opacity 0
-    value: widget.animate ? 0.0 : 1.0,
   );
 
   @override
   void initState() {
     super.initState();
-    if (widget.animate) {
-      // 30ms stagger 入场（上限 420ms）
-      final delay = (widget.index * kRowStaggerMs).clamp(0, kRowStaggerMaxMs);
-      Future.delayed(Duration(milliseconds: delay), () {
-        if (mounted) _in.forward();
-      });
-    }
+    // 30ms stagger 入场（上限 420ms）
+    final delay = (widget.index * kRowStaggerMs).clamp(0, kRowStaggerMaxMs);
+    Future.delayed(Duration(milliseconds: delay), () {
+      if (mounted) _in.forward();
+    });
     _loadPic();
-  }
-
-  @override
-  void didUpdateWidget(_TrackRow oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // 入场闸门在动画排期间被关上（用户开始滚动）：还没起飞的行直接就位，
-    // 不能留在 opacity 0 当隐形行。已经在飞的放任飞完。
-    if (oldWidget.animate &&
-        !widget.animate &&
-        _in.value < 1 &&
-        !_in.isAnimating) {
-      _in.value = 1;
-    }
   }
 
   Future<void> _loadPic() async {
