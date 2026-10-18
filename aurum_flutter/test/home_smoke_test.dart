@@ -58,7 +58,9 @@ class _StubEngine implements PlayerEngine {
 
 void main() {
   testWidgets('HomePage 全树构建 smoke', (tester) async {
-    final app = AppState(engine: _StubEngine());
+    // autoStart: false —— 启动搜索会打真实网络：CI 上接口通了会填满在线列表，
+    // 「播放列表」标签变成「周杰伦 · N 首」，断言就挂了（本地网络不通所以一直没暴露）。
+    final app = AppState(engine: _StubEngine(), autoStart: false);
 
     await tester.pumpWidget(AurumApp(app: app));
     // 放行启动期异步（本地 API 探测 + 默认搜索）
@@ -89,7 +91,9 @@ void main() {
   });
 
   testWidgets('窄屏（<880px）走抽屉布局', (tester) async {
-    final app = AppState(engine: _StubEngine());
+    // autoStart: false —— 启动搜索会打真实网络：CI 上接口通了会填满在线列表，
+    // 「播放列表」标签变成「周杰伦 · N 首」，断言就挂了（本地网络不通所以一直没暴露）。
+    final app = AppState(engine: _StubEngine(), autoStart: false);
 
     tester.view.physicalSize = const Size(800, 1200);
     tester.view.devicePixelRatio = 1.0;
