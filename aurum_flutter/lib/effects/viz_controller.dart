@@ -97,8 +97,8 @@ class VizController extends ChangeNotifier implements TickerProvider {
 
   /// 当前该显示的音名：人声段是人声音高，乐器段是乐器最高音
   String? get pitchNote => switch (window.phase) {
-        // 唱完静下来 1.5s 就收掉字母，否则它会一直挂到下一句
-        PitchPhase.vocal => window.silence > 1.5 ? null : vocal.note,
+        // 唱完静 0.6s 就让字母落下去（>8s 段落前先收，段开始再升上来）
+        PitchPhase.vocal => window.silence > 0.6 ? null : vocal.note,
         PitchPhase.instrument => pitch.note,
         PitchPhase.off => null,
       };

@@ -58,10 +58,10 @@ class PitchDetector {
     this.sampleRate = 44100,
     this.decimate = 1,
     this.rmsFloor = 0.004,
-    this.clarityMin = 0.40,
-    this.stableFrames = 1,
+    this.clarityMin = 0.55,
+    this.stableFrames = 2,
     this.analysisSamples = 640,
-    this.yinThreshold = 0.26,
+    this.yinThreshold = 0.20,
     this.highPassHz = 220,
     this.lowPassHz = 0,
     this.takeHighest = true,
@@ -74,12 +74,12 @@ class PitchDetector {
     double maxHz = 1100,
     double sampleRate = 44100,
     double rmsFloor = 0.005,
-    double clarityMin = 0.40,
+    double clarityMin = 0.55,
     int analysisSamples = 512,
-    double yinThreshold = 0.28,
+    double yinThreshold = 0.22,
     double highPassHz = 90,
     double lowPassHz = 1400,
-    int holdFrames = 2,
+    int holdFrames = 3,
   }) =>
       PitchDetector(
         target: PitchTarget.vocal,
@@ -111,7 +111,8 @@ class PitchDetector {
   final double rmsFloor;
   /// 置信度门槛（1 - YIN 最小累积均值归一化差值）
   final double clarityMin;
-  /// 同一音高至少连续多少帧才算数（乐器默认 1，抢瞬态）
+  /// 同一音高至少连续多少帧才算数（2 帧 ≈ 33ms：守住 0.2s 级瞬态，
+  /// 又不让单帧毛刺直接跳字）
   final int stableFrames;
   /// 抽取**之后**参与分析的样本数（人声 512 ≈ 23ms；乐器 640 ≈ 14.5ms）
   final int analysisSamples;
@@ -413,11 +414,13 @@ class PitchDetector {
 ///    走乐器模式。
 ///  - 第一句歌词之前（前奏）按无歌词处理。
 class PitchWindow {
-  PitchWindow({this.minGap = 8, this.silenceSec = 2.0});
+  PitchWindow({this.minGap = 8, this.silenceSec = 1.2});
 
   /// 长间隙阈值（秒）：两句歌词间隔超过它才可能是纯乐器段
   final double minGap;
-  /// 人声连续测不到多久就认为「唱完了」，切乐器
+  /// 人声连续测不到多久就认为「唱完了」，切乐器。
+  /// 1.2s：字母在 0.6s 时先落下（界面门限），0.38s 落完，
+  /// 1.2s 切到乐器段再从底部升起来——落和升之间留一个呼吸。
   final double silenceSec;
 
   PitchPhase phase = PitchPhase.off;

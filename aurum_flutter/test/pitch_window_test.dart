@@ -40,7 +40,7 @@ void main() {
     expect(phase, PitchPhase.vocal);
   });
 
-  test('间隔 >8s 且人声停了 2s：切成乐器', () {
+  test('间隔 >8s 且人声停了 1.2s：切成乐器', () {
     final w = PitchWindow();
     final lines = _lines([0, 20]);
     // 前 1.5s 还在唱
