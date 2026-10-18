@@ -118,6 +118,80 @@ void main() {
     expect(d.note, isNull);
   });
 
+
+  /* ---------------- 人声 / 乐器 双档 ---------------- */
+
+  test('人声档：混着很响的贝斯也能锁到人声 A3', () {
+    final d = PitchDetector.vocal();
+    // 55Hz 贝斯（响度是人声的 3 倍）+ 220Hz 人声（含 6 个谐波）
+    final w = Float32List(2048);
+    for (var i = 0; i < w.length; i++) {
+      var voice = 0.0;
+      for (var k = 1; k <= 6; k++) {
+        voice += math.sin(2 * math.pi * 220 * k * i / 44100) / k;
+      }
+      w[i] = 0.10 * voice + 0.30 * math.sin(2 * math.pi * 55 * i / 44100);
+    }
+    var locked = false;
+    for (var f = 0; f < 6; f++) {
+      locked = d.update(w) || locked;
+    }
+    expect(locked, isTrue);
+    expect(d.note, 'A3', reason: '人声档不能被贝斯带跑，也不能跳八度');
+  });
+
+  test('人声档：跟随旋律变化（E4 → G4），不是只取最高音', () {
+    final d = PitchDetector.vocal();
+    expect(_feed(d, 329.63, frames: 4), isTrue);
+    expect(d.note, 'E4');
+
+    // 换到更高的音：应当跟过去（不是「已经锁了最高就不动」）
+    expect(_feed(d, 392.0, frames: 4), isTrue);
+    expect(d.note, 'G4');
+
+    // 再往低走：人声档也要跟下来
+    expect(_feed(d, 261.63, frames: 4), isTrue);
+    expect(d.note, 'C4');
+  });
+
+  test('人声档：单独的低频贝斯（60Hz）不锁', () {
+    final d = PitchDetector.vocal();
+    expect(_feed(d, 60, frames: 6), isFalse);
+    expect(d.note, isNull);
+  });
+
+  test('乐器档：响贝斯盖不住 1kHz 的 lead', () {
+    final d = PitchDetector();
+    final w = Float32List(2048);
+    for (var i = 0; i < w.length; i++) {
+      var lead = 0.0;
+      for (var k = 1; k <= 4; k++) {
+        lead += math.sin(2 * math.pi * 1046.5 * k * i / 44100) / k;
+      }
+      // 贝斯比 lead 响一倍
+      w[i] = 0.09 * lead + 0.22 * math.sin(2 * math.pi * 55 * i / 44100);
+    }
+    var locked = false;
+    for (var f = 0; f < 6; f++) {
+      locked = d.update(w) || locked;
+    }
+    expect(locked, isTrue);
+    expect(d.note, 'C6');
+  });
+
+  test('乐器档：快速瞬态（每帧换音）也能逐帧捕捉', () {
+    // 0.2s 一个音、连续上行：模拟快速 pluck 音阶
+    final d = PitchDetector();
+    final notes = <String>[];
+    for (final hz in [523.25, 587.33, 659.25, 783.99]) {
+      for (var f = 0; f < 2; f++) {
+        d.update(_sine(hz, amp: 0.2));
+      }
+      notes.add(d.note ?? '-');
+    }
+    expect(notes, ['C5', 'D5', 'E5', 'G5'], reason: '每 2 帧一个音也要跟上');
+  });
+
   test('长间隙定位：两句 >10s 才开窗，窗口按前一句起点界定', () {
     final lines = [
       LyricLine(t: 0, text: 'a'),

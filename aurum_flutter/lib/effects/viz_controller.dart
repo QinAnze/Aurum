@@ -47,18 +47,17 @@ class VizController extends ChangeNotifier implements TickerProvider {
   /// 底鼓检测器：中低频快速冲击 → 窗口四周打光（kick.env 即强度包络）
   final KickDetector kick = KickDetector();
 
-  /// 音高检测器：两句歌词间隔 >10s 的窗口里，取最高的高音响度音
-  /// （lead / guitar / pluck / color bass），以 E5 形式蹦在封面中间
+  /// 乐器音高：窗口内取最高的音（lead / guitar / pluck / color bass）
   final PitchDetector pitch = PitchDetector();
 
-  /// 无歌词曲目：持续响度最大段（drop）跟踪
+  /// 人声音高：歌词段跟着旋律走（不是取最高，是当前这个音）
+  final PitchDetector vocal = PitchDetector.vocal();
+
+  /// 逐帧决定跑人声还是乐器（歌词段 → 人声；>8s 的纯乐器段 → 乐器）
+  final PitchWindow window = PitchWindow();
+
+  /// 无歌词曲目 / 前奏：持续响度最大段（drop）跟踪
   final LoudSectionTracker loud = LoudSectionTracker();
-
-  /// 当前所处的长间隙起点（秒）；null = 不在间隙窗口里
-  double? _pitchGapStart;
-
-  /// 音高窗口是否激活（长间隙 或 响段）
-  bool _pitchActive = false;
 
   /// 上一次的播放位置：用于识别切歌/回跳并重置跟踪
   double _lastPos = 0;
@@ -96,8 +95,23 @@ class VizController extends ChangeNotifier implements TickerProvider {
   /// 封面全局矩形（音高字母落点）
   Rect? get coverRect => _coverRect;
 
-  /// 是否该显示音高字母：在长间隙窗口内且已锁定到音
-  bool get pitchVisible => _pitchActive && pitch.note != null;
+  /// 当前该显示的音名：人声段是人声音高，乐器段是乐器最高音
+  String? get pitchNote => switch (window.phase) {
+        // 唱完静下来 1.5s 就收掉字母，否则它会一直挂到下一句
+        PitchPhase.vocal => window.silence > 1.5 ? null : vocal.note,
+        PitchPhase.instrument => pitch.note,
+        PitchPhase.off => null,
+      };
+
+  /// 是否该显示音高字母
+  bool get pitchVisible => pitchNote != null;
+
+  /// 音名变化计数（驱动弹出动画）
+  int get pitchRevision => switch (window.phase) {
+        PitchPhase.vocal => vocal.revision,
+        PitchPhase.instrument => pitch.revision,
+        PitchPhase.off => 0,
+      };
 
   /// 一帧波形的线性 RMS（响度段跟踪用）
   static double _waveRms(Float32List? w) {
@@ -147,16 +161,18 @@ class VizController extends ChangeNotifier implements TickerProvider {
     final oc = fxOn();
     final tsec = _tsec;
 
-    // 真实频谱数据；全零（污染/无信号）则回退 BPM 模拟
+    // 真实频谱数据；无信号则回退 BPM 模拟。
+    // 不要用「FFT 前几个 bin 之和 > 0」判有没有信号：那些 bin ≈ 低频，
+    // 纯高频 lead 段落里可以是 0，会把音高/kick 检测整体关掉。改看波形能量。
     final fft = engine.fft;
     final wave = engine.wave;
     var real = false;
-    if (fft != null && playing && fft.isNotEmpty) {
+    if (playing && wave != null && wave.isNotEmpty) {
       var sum = 0.0;
-      for (var i = 0; i < 16 && i < fft.length; i++) {
-        sum += fft[i];
+      for (final v in wave) {
+        sum += v * v;
       }
-      real = sum > 0;
+      real = math.sqrt(sum / wave.length) > 1e-4; // -80dBFS 以上算有信号
     }
 
     /* ---- 底鼓检测：只在播放 + 特效开关打开时判，否则让包络自然回落 ----
@@ -164,14 +180,14 @@ class VizController extends ChangeNotifier implements TickerProvider {
        长期饱和在 1.0，判不了冲击（详见 kick_detector 顶部注释）。 */
     kick.update(real ? wave : null, dt, active: oc && playing && real);
 
-    /* ---- 音高检测：有歌词看「长间隙(>8s)」；无歌词看「持续响度最大段」 ---- */
+    /* ---- 音高：歌词段测人声，>8s 的纯乐器段测乐器最高音 ---- */
     final pos = engine.positionSec;
     if (pos < _lastPos - 1.0) {
       // 切歌 / 回跳：响度统计与已锁定的音全部重来
       loud.reset();
       pitch.reset();
-      _pitchGapStart = null;
-      _pitchActive = false;
+      vocal.reset();
+      window.reset();
     }
     _lastPos = pos;
 
@@ -179,39 +195,34 @@ class VizController extends ChangeNotifier implements TickerProvider {
       final lines = lyrics();
       if (playing) loud.update(_waveRms(wave), dt);
 
-      if (lines.length >= 2) {
-        final gap = longGapAt(lines, pos);
-        if (gap == null) {
-          if (_pitchGapStart != null) {
-            _pitchGapStart = null;
-            pitch.reset();
-          }
-          _pitchActive = false;
-        } else {
-          if (_pitchGapStart != gap.start) {
-            _pitchGapStart = gap.start;
-            pitch.reset();
-          }
-          _pitchActive = true;
-          // 暂停时不更新检测，但已锁定的音保留（字母继续停在封面中间）
-          if (playing && real) pitch.update(wave, active: true);
-        }
-      } else {
-        // 没歌词（或不足两句）：按持续响度最大段（一般是 drop）来
-        if (loud.active) {
-          if (!_pitchActive) pitch.reset();
-          _pitchActive = true;
-          if (playing && real) pitch.update(wave, active: true);
-        } else {
-          if (_pitchActive) pitch.reset();
-          _pitchActive = false;
-        }
+      final prevPhase = window.phase;
+      // 人声只在人声相位跑（省一半算力）；本帧测没测到音用来判断「唱完了」
+      var heard = false;
+      if (prevPhase == PitchPhase.vocal && playing && real) {
+        vocal.update(wave, active: true);
+        heard = vocal.lastValid;
+      }
+      final phase = window.update(
+        lines: lines,
+        pos: pos,
+        dt: dt,
+        playing: playing,
+        vocalHeard: heard,
+        loudActive: loud.active,
+      );
+      if (phase != prevPhase) {
+        // 换相位就清空对应检测器：新窗口从零开始取音
+        if (phase == PitchPhase.vocal) vocal.reset();
+        if (phase == PitchPhase.instrument) pitch.reset();
+      }
+      if (phase == PitchPhase.instrument && playing && real) {
+        pitch.update(wave, active: true);
       }
     } else {
-      _pitchGapStart = null;
-      _pitchActive = false;
+      window.reset();
       loud.reset();
       pitch.reset();
+      vocal.reset();
     }
 
     /* ---- 高潮因子：峰值保持 + 相对阈值（intro 安静不抖，drop 持续抖）---- */
@@ -355,10 +366,10 @@ class VizController extends ChangeNotifier implements TickerProvider {
       cloudJx = 0;
       cloudJy = 0;
       kick.reset();
-      _pitchGapStart = null;
-      _pitchActive = false;
+      window.reset();
       loud.reset();
       pitch.reset();
+      vocal.reset();
       notifyListeners();
       return;
     }

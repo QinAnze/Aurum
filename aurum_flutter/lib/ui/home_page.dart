@@ -227,8 +227,8 @@ class _HomePageState extends State<HomePage> {
       child: AnimatedBuilder(
         animation: _viz,
         builder: (_, __) => PitchBadge(
-          note: _viz.pitchVisible ? _viz.pitch.note : null,
-          revision: _viz.pitch.revision,
+          note: _viz.pitchNote,
+          revision: _viz.pitchRevision,
           rect: _viz.coverRect,
           c1: widget.app.c1,
         ),
