@@ -330,7 +330,14 @@ class SoloudEngine implements PlayerEngine {
   Future<void> _stopInternal() async {
     _posTimer?.cancel();
     _posTimer = null;
-    // 关键：把「本会话创建过的所有 voice / source」都收走。
+    // 关键：先断开旧音源的事件订阅，再清场。
+    // flutter_soloud 对 stop()/disposeSource() 也会发 handleIsNoMoreValid
+    // （插件文档：Every stopped voice emits a handleIsNoMoreValid event），
+    // 那是「我们主动停掉」的回声；若被 _listenSource 收到会当成自然播完，
+    // 触发 AppState.next() —— 表现为「点第 i 首却放第 i+1 首」。
+    _soundSub?.cancel();
+    _soundSub = null;
+    // 把「本会话创建过的所有 voice / source」都收走。
     // 只停 _handle 的话，一旦某次 stop 异常/超时，句柄就被丢掉、
     // 旧歌永远停不下来（切歌后两首叠着放）。
     final handles = List<SoundHandle>.from(_voices);

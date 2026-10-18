@@ -1,7 +1,7 @@
 name: aurum
 description: "Aurum · 液态玻璃音乐播放器（Flutter 移植版）"
 publish_to: "none"
-version: 0.1.0+1
+version: 0.2.1+2
 
 environment:
   sdk: ^3.13.0

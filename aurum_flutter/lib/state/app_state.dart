@@ -498,6 +498,9 @@ class AppState extends ChangeNotifier {
         duration = durationSec;
         _notify();
       case EngineEnded():
+        // 切歌加载期间的 ended 是引擎「停旧歌」的回声，不是自然播完。
+        // 当成播完去 next() 就会表现为「点第 i 首却放第 i+1 首」。
+        if (_tryingUrls) break;
         if (mode == PlayMode.one) {
           engine.seek(0);
           engine.play();
