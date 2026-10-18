@@ -55,9 +55,20 @@ void main() {
     expect(d.note, isNull);
   });
 
-  test('超出上限的「特别高频」（8kHz）不算', () {
+  test('镲片/齿音那种高频噪声不锁定', () {
+    // 纯 8kHz 正弦会被自相关锁到它的次谐波（≈4kHz），真实音乐里
+    // 这种「纯高频单音」不存在；镲片/齿音是宽带噪声，靠置信度挡。
     final d = PitchDetector();
-    final locked = _feed(d, 8000, amp: 0.3, frames: 10);
+    var seed = 12345;
+    final w = Float32List(2048);
+    var locked = false;
+    for (var f = 0; f < 10; f++) {
+      for (var i = 0; i < w.length; i++) {
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+        w[i] = ((seed / 0x7fffffff) * 2 - 1) * 0.3;
+      }
+      locked = d.update(w) || locked;
+    }
     expect(locked, isFalse);
     expect(d.note, isNull);
   });
@@ -85,6 +96,13 @@ void main() {
     expect(longGapAt(lines, 22), isNull);
     // 边界：窗口末尾（下一句开始）就该关窗
     expect(longGapAt(lines, 20), isNull);
+  });
+
+  test('阈值是 8s：整 8s 不算，8.5s 算', () {
+    final a = [LyricLine(t: 0, text: 'a'), LyricLine(t: 8, text: 'b')];
+    expect(longGapAt(a, 4), isNull);
+    final b = [LyricLine(t: 0, text: 'a'), LyricLine(t: 8.5, text: 'b')];
+    expect(longGapAt(b, 4), isNotNull);
   });
 
   test('reset 后清空已锁定的音', () {

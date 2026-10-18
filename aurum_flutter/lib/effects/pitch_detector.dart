@@ -1,7 +1,7 @@
 /// 音高检测：从时域波形估基频，输出音符名（如 E5）。
 ///
 /// 目标音色：高频 lead / guitar solo / pluck / color bass——
-/// 瞬态快、响度高、基频集中在 180Hz–2.5kHz。
+/// 瞬态快、响度高、基频集中在 180Hz–5kHz。
 /// 三类干扰用不同门槛排掉：
 ///  - 镲片/齿音等「特别高频」：检测上限 2.5kHz
 ///  - 低响度的杂项音效：RMS 门槛（相对本段峰值，抗音量差异）
@@ -23,7 +23,7 @@ import '../models.dart';
 ({double start, double end, int index})? longGapAt(
   List<LyricLine> lines,
   double pos, {
-  double minGap = 10,
+  double minGap = 8,
 }) {
   for (var i = 0; i < lines.length - 1; i++) {
     final a = lines[i].t;
@@ -45,26 +45,29 @@ String midiNoteName(int midi) => '${_kNoteNames[midi % 12]}${midi ~/ 12 - 1}';
 class PitchDetector {
   PitchDetector({
     this.minHz = 180,
-    this.maxHz = 2500,
+    this.maxHz = 5000,
     this.sampleRate = 44100,
     this.rmsFloor = 0.012,
     this.clarityMin = 0.55,
-    this.stableFrames = 3,
-    this.analysisSamples = 1024,
+    this.stableFrames = 1,
+    this.analysisSamples = 512,
   });
 
   /// 检测下限（低于此视为贝斯/底鼓，不算 lead）
   final double minHz;
-  /// 检测上限（高于此视为镲片/齿音等「特别高频」干扰）
+  /// 检测上限。电子乐的 lead/pluck 可以很高（5kHz ≈ D#8），
+  /// 镲片/齿音的排除交给过零率 sanity，而不是靠压上限。
   final double maxHz;
   final double sampleRate;
   /// 响度门槛（线性 RMS）：静音/弱音效直接跳过
   final double rmsFloor;
   /// 归一化自相关置信度门槛（0..1）
   final double clarityMin;
-  /// 同一音高至少连续多少帧才算数（压住瞬时毛刺）
+  /// 同一音高至少连续多少帧才算数。
+  /// 1 = 只要一帧够响够清晰就锁定（要抓快速 lead/pluck 的瞬态）；
+  /// 噪声由 RMS/置信度/过零率三道门负责挡。
   final int stableFrames;
-  /// 参与分析的最新样本数（1024 ≈ 23ms）
+  /// 参与分析的最新样本数（512 ≈ 11.6ms，短窗 = 快响应）
   final int analysisSamples;
 
   /// 本窗口锁定过的最高音（MIDI）
@@ -225,5 +228,77 @@ class PitchDetector {
     _runAnchor = null;
     lastClarity = 0;
     lastRms = 0;
+  }
+}
+
+
+/// 无歌词曲目的「持续响度最大段」跟踪器（通常就是 drop）。
+///
+/// 直播流看不到未来，只能按「到目前为止最响的那一档」近似：
+///  - 0.25s 平滑 RMS
+///  - 峰值保持 + 极慢回落（半衰期约 2 分钟）
+///  - 高于「峰值 × gateRatio」并持续 [attackSec] → 进入响段
+///  - 低于门槛持续 [releaseSec] → 退出响段
+///  - 开头 [warmupSec] 秒不触发（等峰值立起来，避免 intro 就亮）
+class LoudSectionTracker {
+  LoudSectionTracker({
+    this.attackSec = 0.8,
+    this.releaseSec = 2.5,
+    this.gateRatio = 0.55,
+    this.floor = 0.008,
+    this.smoothTau = 0.25,
+    this.warmupSec = 4,
+  });
+
+  /// 持续多响才进入响段（秒）
+  final double attackSec;
+  /// 低于门槛多久退出（秒）
+  final double releaseSec;
+  /// 相对峰值的门槛比例
+  final double gateRatio;
+  /// 绝对底噪门（安静曲子也要求有一点能量）
+  final double floor;
+  final double smoothTau;
+  final double warmupSec;
+
+  bool get active => _active;
+  double get rms => _rms;
+  double get peak => _peak;
+
+  bool _active = false;
+  double _rms = 0;
+  double _peak = 0;
+  double _loudRun = 0;
+  double _quietRun = 0;
+  double _t = 0;
+
+  void update(double rawRms, double dt) {
+    dt = dt.clamp(0.0, 0.1);
+    _t += dt;
+
+    final k = 1 - math.exp(-dt / smoothTau);
+    _rms += (rawRms - _rms) * k;
+    _peak = math.max(_rms, _peak * math.exp(-dt / 120.0));
+
+    final gate = math.max(_peak * gateRatio, floor);
+    if (_rms > gate) {
+      _loudRun += dt;
+      _quietRun = 0;
+    } else {
+      _quietRun += dt;
+      if (_quietRun > 0.4) _loudRun = 0;
+    }
+
+    if (!_active && _t >= warmupSec && _loudRun >= attackSec) _active = true;
+    if (_active && _quietRun >= releaseSec) _active = false;
+  }
+
+  void reset() {
+    _active = false;
+    _rms = 0;
+    _peak = 0;
+    _loudRun = 0;
+    _quietRun = 0;
+    _t = 0;
   }
 }

@@ -51,8 +51,17 @@ class VizController extends ChangeNotifier implements TickerProvider {
   /// （lead / guitar / pluck / color bass），以 E5 形式蹦在封面中间
   final PitchDetector pitch = PitchDetector();
 
+  /// 无歌词曲目：持续响度最大段（drop）跟踪
+  final LoudSectionTracker loud = LoudSectionTracker();
+
   /// 当前所处的长间隙起点（秒）；null = 不在间隙窗口里
   double? _pitchGapStart;
+
+  /// 音高窗口是否激活（长间隙 或 响段）
+  bool _pitchActive = false;
+
+  /// 上一次的播放位置：用于识别切歌/回跳并重置跟踪
+  double _lastPos = 0;
 
   /// 封面绑定抖动（px / deg）
   double shakeDx = 0, shakeDy = 0, shakeRot = 0;
@@ -88,7 +97,17 @@ class VizController extends ChangeNotifier implements TickerProvider {
   Rect? get coverRect => _coverRect;
 
   /// 是否该显示音高字母：在长间隙窗口内且已锁定到音
-  bool get pitchVisible => _pitchGapStart != null && pitch.note != null;
+  bool get pitchVisible => _pitchActive && pitch.note != null;
+
+  /// 一帧波形的线性 RMS（响度段跟踪用）
+  static double _waveRms(Float32List? w) {
+    if (w == null || w.isEmpty) return 0;
+    var sum = 0.0;
+    for (final v in w) {
+      sum += v * v;
+    }
+    return math.sqrt(sum / w.length);
+  }
 
   @override
   Ticker createTicker(TickerCallback onTick) => Ticker(onTick);
@@ -145,24 +164,53 @@ class VizController extends ChangeNotifier implements TickerProvider {
        长期饱和在 1.0，判不了冲击（详见 kick_detector 顶部注释）。 */
     kick.update(real ? wave : null, dt, active: oc && playing && real);
 
-    /* ---- 音高检测：只在「两句歌词间隔 >10s」的窗口里跑 ---- */
+    /* ---- 音高检测：有歌词看「长间隙(>8s)」；无歌词看「持续响度最大段」 ---- */
+    final pos = engine.positionSec;
+    if (pos < _lastPos - 1.0) {
+      // 切歌 / 回跳：响度统计与已锁定的音全部重来
+      loud.reset();
+      pitch.reset();
+      _pitchGapStart = null;
+      _pitchActive = false;
+    }
+    _lastPos = pos;
+
     if (oc) {
-      final gap = longGapAt(lyrics(), engine.positionSec);
-      if (gap == null) {
-        if (_pitchGapStart != null) {
-          _pitchGapStart = null;
-          pitch.reset();
+      final lines = lyrics();
+      if (playing) loud.update(_waveRms(wave), dt);
+
+      if (lines.length >= 2) {
+        final gap = longGapAt(lines, pos);
+        if (gap == null) {
+          if (_pitchGapStart != null) {
+            _pitchGapStart = null;
+            pitch.reset();
+          }
+          _pitchActive = false;
+        } else {
+          if (_pitchGapStart != gap.start) {
+            _pitchGapStart = gap.start;
+            pitch.reset();
+          }
+          _pitchActive = true;
+          // 暂停时不更新检测，但已锁定的音保留（字母继续停在封面中间）
+          if (playing && real) pitch.update(wave, active: true);
         }
       } else {
-        if (_pitchGapStart != gap.start) {
-          _pitchGapStart = gap.start;
-          pitch.reset();
+        // 没歌词（或不足两句）：按持续响度最大段（一般是 drop）来
+        if (loud.active) {
+          if (!_pitchActive) pitch.reset();
+          _pitchActive = true;
+          if (playing && real) pitch.update(wave, active: true);
+        } else {
+          if (_pitchActive) pitch.reset();
+          _pitchActive = false;
         }
-        // 暂停时不更新检测，但已锁定的音保留（字母继续停在封面中间）
-        if (playing && real) pitch.update(wave, active: true);
       }
     } else {
       _pitchGapStart = null;
+      _pitchActive = false;
+      loud.reset();
       pitch.reset();
     }
 
@@ -308,6 +356,8 @@ class VizController extends ChangeNotifier implements TickerProvider {
       cloudJy = 0;
       kick.reset();
       _pitchGapStart = null;
+      _pitchActive = false;
+      loud.reset();
       pitch.reset();
       notifyListeners();
       return;
