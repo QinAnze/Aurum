@@ -48,6 +48,44 @@ void main() {
     expect(d.note, 'G5', reason: '更高的音应当覆盖低音');
   });
 
+  test('泛音丰富的低音不会跳到高次谐波（A3 合成器音色）', () {
+    // 220Hz + 20 个谐波（1/k 幅度）：典型合成器 lead/pluck 的频谱。
+    // 裸自相关会在 T/2、T/3… 的谐波峰上误判成 C8 之类的高音。
+    final w = Float32List(2048);
+    for (var i = 0; i < w.length; i++) {
+      var v = 0.0;
+      for (var k = 1; k <= 20; k++) {
+        v += math.sin(2 * math.pi * 220 * k * i / 44100) / k;
+      }
+      w[i] = v * 0.12;
+    }
+    final d = PitchDetector();
+    var locked = false;
+    for (var f = 0; f < 5; f++) {
+      locked = d.update(w) || locked;
+    }
+    expect(locked, isTrue);
+    expect(d.note, 'A3', reason: '必须锁基频 220Hz，不能跳到高次谐波');
+  });
+
+  test('基频缺失（只有 2–10 次谐波）也能锁到真实周期', () {
+    final w = Float32List(2048);
+    for (var i = 0; i < w.length; i++) {
+      var v = 0.0;
+      for (var k = 2; k <= 10; k++) {
+        v += math.sin(2 * math.pi * 220 * k * i / 44100) / k;
+      }
+      w[i] = v * 0.15;
+    }
+    final d = PitchDetector();
+    var locked = false;
+    for (var f = 0; f < 5; f++) {
+      locked = d.update(w) || locked;
+    }
+    expect(locked, isTrue);
+    expect(d.note, 'A3');
+  });
+
   test('响度不足的杂音不锁定（RMS 门槛）', () {
     final d = PitchDetector();
     final locked = _feed(d, 1200, amp: 0.005, frames: 10);

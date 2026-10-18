@@ -7,8 +7,9 @@
 ///  - 低响度的杂项音效：RMS 门槛（相对本段峰值，抗音量差异）
 ///  - 噪声般的非周期信号：归一化自相关置信度门槛
 ///
-/// 算法：去直流 → 归一化自相关（ACF）→ 取「≥ 0.9×峰值的最小滞后」
-/// （避免八度偏低）→ 抛物线插值到亚样本精度 → 频率 → MIDI → 音名。
+/// 算法：去直流 → YIN（累积均值归一化差值函数）→ 第一个明显谷
+/// （=基频周期，谐波峰会被归一化抬平，不会像裸自相关那样跳到高次谐波）
+/// → 抛物线插值到亚样本精度 → 频率 → MIDI → 音名。
 ///
 /// 只在「两句歌词间隔 >10s」的窗口里跑（见 [longGapAt]），开销可忽略。
 library;
@@ -120,66 +121,69 @@ class PitchDetector {
     final maxLag = (sampleRate / minHz).ceil().clamp(minLag + 1, n ~/ 2);
     if (maxLag <= minLag) return false;
 
-    // 归一化自相关（每帧一次，缓存到缓冲区，避免重复算）
-    double acf(int lag) {
-      if (lag < 1 || lag >= n) return 0;
-      final m = n - lag;
-      var sum = 0.0, e1 = 0.0, e2 = 0.0;
+    // ---- YIN：差值函数 d(τ) + 累积均值归一化 d'(τ) ----
+    // 为什么不用裸自相关：泛音丰富的音色（合成器 lead）在 T/2、T/3… 处
+    // 都有很高的自相关峰，任何「取接近峰值的最早峰」的启发式都会跳到
+    // 高次谐波上——实测低音被判成 C8（≈4186Hz，其实是它的高次谐波）。
+    // YIN 的累积均值归一化会把真正的周期压成第一个深谷，谐波峰被抬平。
+    final d = Float64List(maxLag + 1);
+    for (var tau = 1; tau <= maxLag; tau++) {
+      var sum = 0.0;
+      final m = n - tau;
       for (var i = 0; i < m; i++) {
-        final a = x[i], b = x[i + lag];
-        sum += a * b;
-        e1 += a * a;
-        e2 += b * b;
+        final diff = x[i] - x[i + tau];
+        sum += diff * diff;
       }
-      final denom = math.sqrt(e1 * e2);
-      return denom <= 1e-12 ? 0 : sum / denom;
+      d[tau] = sum;
+    }
+    final cmnd = Float64List(maxLag + 1);
+    var running = 0.0;
+    for (var tau = 1; tau <= maxLag; tau++) {
+      running += d[tau];
+      cmnd[tau] = running <= 1e-12 ? 1.0 : d[tau] * tau / running;
     }
 
-    final rs = Float64List(maxLag + 2);
-    for (var lag = minLag; lag <= maxLag; lag++) {
-      rs[lag] = acf(lag);
-    }
-    var maxR = 0.0;
-    for (var lag = minLag; lag <= maxLag; lag++) {
-      if (rs[lag] > maxR) maxR = rs[lag];
-    }
-    lastClarity = maxR;
-    if (maxR < clarityMin) {
-      _run = 0;
-      _runAnchor = null;
-      return false;
-    }
-
-    // 取「第一个 ≥ 0.9×峰值的**局部极大**」：直接取最小滞后会把周期
-    // 截短一个半音以上（纯音的自相关在峰值前 7% 处就已过 0.9）；
-    // 取局部极大则正好落在真实周期 T 上，也天然避开 2T（八度偏低）。
+    // 第一个低于阈值的谷（再走到谷底）＝基频周期；这正是 YIN 抗谐波的关键
+    const yinThreshold = 0.15;
     var bestLag = -1;
-    for (var lag = minLag + 1; lag <= maxLag - 1; lag++) {
-      if (rs[lag] >= maxR * 0.9 && rs[lag] >= rs[lag - 1] && rs[lag] >= rs[lag + 1]) {
-        bestLag = lag;
+    for (var tau = minLag; tau <= maxLag; tau++) {
+      if (cmnd[tau] < yinThreshold) {
+        while (tau + 1 <= maxLag && cmnd[tau + 1] < cmnd[tau]) {
+          tau++;
+        }
+        bestLag = tau;
         break;
       }
     }
     if (bestLag < 0) {
-      for (var lag = minLag; lag <= maxLag; lag++) {
-        if (rs[lag] == maxR) {
-          bestLag = lag;
-          break;
+      // 没有明显谷（噪声/弱周期）：退回全局最小，并要求足够干净
+      var m = double.infinity;
+      for (var tau = minLag; tau <= maxLag; tau++) {
+        if (cmnd[tau] < m) {
+          m = cmnd[tau];
+          bestLag = tau;
         }
       }
+      lastClarity = 1 - (m.isFinite ? m : 1.0);
+      if (bestLag < 0 || lastClarity < clarityMin) {
+        _run = 0;
+        _runAnchor = null;
+        return false;
+      }
+    } else {
+      lastClarity = 1 - cmnd[bestLag];
     }
-    if (bestLag < 0) return false;
 
-    // 抛物线插值（亚样本精度）
+    // 抛物线插值（谷底 → 亚样本精度）
     var lagF = bestLag.toDouble();
-    if (bestLag > minLag && bestLag < maxLag) {
-      final r0 = rs[bestLag - 1] == 0 ? acf(bestLag - 1) : rs[bestLag - 1];
-      final r1 = rs[bestLag];
-      final r2 = rs[bestLag + 1] == 0 ? acf(bestLag + 1) : rs[bestLag + 1];
-      final denom = 2 * (2 * r1 - r0 - r2);
-      if (denom.abs() > 1e-9) {
-        final d = (r2 - r0) / denom;
-        if (d.abs() < 1) lagF += d;
+    if (bestLag > 1 && bestLag < maxLag) {
+      final c0 = cmnd[bestLag - 1];
+      final c1 = cmnd[bestLag];
+      final c2 = cmnd[bestLag + 1];
+      final denom = 2 * (2 * c1 - c0 - c2);
+      if (denom.abs() > 1e-12) {
+        final delta = (c0 - c2) / denom;
+        if (delta.abs() < 1) lagF += delta;
       }
     }
     if (lagF <= 0) return false;
