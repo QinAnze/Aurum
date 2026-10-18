@@ -63,7 +63,7 @@ class EdgeLightPainter extends CustomPainter {
           begin: from,
           end: to,
           colors: [
-            c1.withValues(alpha: 0.52 * lv),
+            c1.withValues(alpha: 0.62 * lv),
             c1.withValues(alpha: 0.16 * lv),
             Colors.transparent,
           ],
@@ -91,7 +91,7 @@ class EdgeLightPainter extends CustomPainter {
     ]) {
       final paint = Paint()
         ..shader = RadialGradient(
-          colors: [c2.withValues(alpha: 0.34 * lv), Colors.transparent],
+          colors: [c2.withValues(alpha: 0.38 * lv), Colors.transparent],
         ).createShader(Rect.fromCircle(center: center, radius: r));
       canvas.drawCircle(center, r, paint);
     }
@@ -106,7 +106,7 @@ class EdgeLightPainter extends CustomPainter {
     final rim = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.4
-      ..color = c1.withValues(alpha: 0.55 * lv);
+      ..color = c1.withValues(alpha: 0.72 * lv);
     canvas.drawRect(full.deflate(1.2), rim);
 
     final inner = Paint()

@@ -126,8 +126,10 @@ class VizController extends ChangeNotifier implements TickerProvider {
       real = sum > 0;
     }
 
-    /* ---- 底鼓检测：只在播放 + 特效开关打开时判，否则让包络自然回落 ---- */
-    kick.update(real ? fft : null, dt, active: oc && playing && real);
+    /* ---- 底鼓检测：只在播放 + 特效开关打开时判，否则让包络自然回落 ----
+       数据源用 wave（时域、线性幅度）：fft 是 dB 归一化 0..1，低频段
+       长期饱和在 1.0，判不了冲击（详见 kick_detector 顶部注释）。 */
+    kick.update(real ? wave : null, dt, active: oc && playing && real);
 
     /* ---- 高潮因子：峰值保持 + 相对阈值（intro 安静不抖，drop 持续抖）---- */
     if (oc) {
