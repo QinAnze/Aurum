@@ -88,22 +88,24 @@ class PitchDetector {
     this.holdFrames = 1,
   });
 
-  /// 人声：窗口 23ms、跟随旋律、换音需稳住 6 帧（≈100ms）
+  /// 人声：窗口 23ms、跟随旋律、换音需稳住 4 帧（≈67ms）
   ///
-  /// 灵敏度刻意比乐器模式**低一档**，但靠的是「换音要稳多久」而不是抬高
-  /// 置信度门槛：真实人声混在伴奏里没法要求干干净净，门槛抬太高会整段测不到；
-  /// 而单帧的泛音跳八度、气声、辅音，只要要求连续 6 帧才算换音就能压掉。
+  /// 灵敏度：比乐器档**稳**，但必须跟得上唱。曾经 holdFrames=6（≈100ms）
+  /// 偏迟钝 —— 用户反馈「人声检测要更灵敏」，100ms 的滞后叠上检测窗口本身，
+  /// 听感上字总是慢半拍。改 4 帧：仍能压掉单帧泛音跳八度、气声、辅音。
+  /// clarityMin 也从 0.55 放到 0.46：真实人声混在伴奏里很难干净，门槛太高
+  /// 会整句测不到 —— 那才是「迟钝」的主因，不是换音帧数。
   factory PitchDetector.vocal({
     double minHz = 85,
     double maxHz = 1100,
     double sampleRate = kDetectorRate,
-    double rmsFloor = 0.005,
-    double clarityMin = 0.55,
+    double rmsFloor = 0.0035,
+    double clarityMin = 0.46,
     int analysisSamples = 512,
-    double yinThreshold = 0.22,
+    double yinThreshold = 0.24,
     double highPassHz = 90,
     double lowPassHz = 1400,
-    int holdFrames = 6,
+    int holdFrames = 4,
   }) =>
       PitchDetector(
         target: PitchTarget.vocal,
@@ -340,8 +342,11 @@ class PitchDetector {
       _lowRmsFrames = 0;
     }
 
-    // ---- 多分辨率：每个子窗口各跑一遍 YIN，取置信度最高的那个 ----
-    final minLag = (fs / maxHz).floor().clamp(2, 4);
+    // 多分辨率：每个子窗口各跑一遍 YIN，取置信度最高的那个 ----
+    // 最小滞后由 maxHz 决定。这里曾经写成 `.clamp(2, 4)`，把「下限 2」误
+    // 打成了「上限 4」—— 人声档本该是 20（1100Hz），被压到 4（5.5kHz），
+    // 于是高频噪声有机会冒充基频。
+    final minLag = math.max(2, (fs / maxHz).floor());
     final maxLagAll = (fs / minHz).ceil();
     _guess = null;
     // 子窗口升序（短→长）。按实际长度决定能开几级（波形太短就退让）
@@ -552,12 +557,19 @@ class PitchDetector {
     if (bestLag < 0) return null;
 
     // 抛物线插值（谷底 → 亚样本精度）
+    //
+    // 过 (-1,c0) (0,c1) (1,c2) 的抛物线，顶点在
+    //   t* = (c0 − c2) / [2·(c0 − 2c1 + c2)]
+    // 分母这里一度写成 `2*(2c1 − c0 − c2)`，也就是标准分母取反 ——
+    // 插值方向整个反了，频率系统性偏 0.5–3%（659Hz 被算成 639Hz，
+    // 音名直接掉到 D#5）。这种偏差小到看着像「检测不准」，很难怀疑到
+    // 插值上来，但它才是音名在边界处乱跳的根源。
     var lagF = bestLag.toDouble();
     if (bestLag > 1 && bestLag < maxLag) {
       final c0 = cmnd[bestLag - 1];
       final c1 = cmnd[bestLag];
       final c2 = cmnd[bestLag + 1];
-      final denom = 2 * (2 * c1 - c0 - c2);
+      final denom = 2 * (c0 - 2 * c1 + c2);
       if (denom.abs() > 1e-12) {
         final delta = (c0 - c2) / denom;
         if (delta.abs() < 1) lagF += delta;

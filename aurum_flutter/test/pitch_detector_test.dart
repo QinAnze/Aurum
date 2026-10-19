@@ -39,6 +39,34 @@ void main() {
     expect(d3.note, 'C4');
   });
 
+  test('频率精度：误差 <1%，不出现半个半音的偏移', () {
+    // 抛物线插值的分母符号曾经写反，导致系统性偏 0.5–3%：
+    // 659.25Hz（E5）被算成 639Hz，音名掉到 D#5。这条守住插值方向。
+    for (final hz in [
+      220.0, 329.63, 392.0, 440.0, 523.25, 659.25, 880.0, 1046.5,
+    ]) {
+      final d = PitchDetector();
+      d.update(_sine(hz));
+      final err = (d.lastHz - hz).abs() / hz;
+      expect(err, lessThan(0.01), reason: '$hz Hz 测得 ${d.lastHz}，误差 $err');
+      final midi = (69 + 12 * (math.log(hz / 440) / math.ln2)).round();
+      expect(d.note, midiNoteName(midi),
+          reason: '$hz Hz 的音名应为 ${midiNoteName(midi)}');
+    }
+  });
+
+  test('minLag 跟着 maxHz 走：人声档不会把 5kHz 当基频', () {
+    // 人声档 maxHz=1100 → minLag 应为 fs/1100 ≈ 20，而不是被错误地夹到 4
+    final d = PitchDetector.vocal();
+    for (var f = 0; f < 6; f++) {
+      d.update(_sine(3000, amp: 0.3));
+    }
+    // 3kHz 在人声上限之外，即使被测到也会被 hz > maxHz 丢掉
+    if (d.lastValid) {
+      expect(d.lastHz, lessThanOrEqualTo(1100.0));
+    }
+  });
+
   test('同一窗口内取最高音：先 G4 后 G5，字母变成 G5', () {
     final d = PitchDetector();
     expect(_feed(d, 392.0), isTrue);
@@ -146,22 +174,27 @@ void main() {
     expect(d.note, 'E4');
 
     // 换到更高的音：应当跟过去（不是「已经锁了最高就不动」）
-    // 人声档要求连续 6 帧才算换音（比乐器档迟钝一档），所以喂 7 帧
-    expect(_feed(d, 392.0, frames: 7), isTrue);
+    // 人声档要求连续 4 帧才算换音，所以喂 5 帧
+    expect(_feed(d, 392.0, frames: 5), isTrue);
     expect(d.note, 'G4');
 
     // 再往低走：人声档也要跟下来
-    expect(_feed(d, 261.63, frames: 7), isTrue);
+    expect(_feed(d, 261.63, frames: 5), isTrue);
     expect(d.note, 'C4');
   });
 
-  test('人声档换音需要连续 6 帧：只闪 3 帧的泛音不跳字', () {
+  test('人声档换音要稳 4 帧：只闪 2 帧的泛音不跳字，第 4 帧才换', () {
     final d = PitchDetector.vocal();
     expect(_feed(d, 329.63, frames: 4), isTrue);
     expect(d.note, 'E4');
-    // 高八度的偶发泛音只持续 3 帧 → 不应改字
-    expect(_feed(d, 659.25, frames: 3), isFalse);
+
+    // 高八度的偶发泛音只持续 2 帧 → 不改字
+    expect(_feed(d, 659.25, frames: 2), isFalse);
     expect(d.note, 'E4');
+
+    // 真的换了音：继续同音喂到第 4 帧应当切过去
+    expect(_feed(d, 659.25, frames: 3), isTrue);
+    expect(d.note, 'E5');
   });
 
   test('人声档：单独的低频贝斯（60Hz）不锁', () {

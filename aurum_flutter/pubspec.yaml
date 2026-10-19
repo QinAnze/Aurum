@@ -25,7 +25,17 @@ flutter:
   uses-material-design: true
   assets:
     - assets/icon.png
+    # 字体随包分发时必须带上许可证（SIL OFL 1.1）
+    - assets/EBGaramond-OFL.txt
   fonts:
     - family: SmileySans
       fonts:
         - asset: assets/SmileySans-Oblique.ttf
+    # 衬线：乐器段平铺的音高字（EB Garamond，SIL OFL 1.1）。
+    # 大字用 Regular（细衬线在超大字号下更好看），小字用 SemiBold（可读）。
+    - family: AurumSerif
+      fonts:
+        - asset: assets/EBGaramond-Regular.ttf
+          weight: 400
+        - asset: assets/EBGaramond-SemiBold.ttf
+          weight: 600
