@@ -93,12 +93,17 @@ class PitchScatterController {
   /// 巨型字概率
   static const double giantChance = 0.08;
 
-  /// 屏幕被字覆盖到多少就清空重来（按面积算，大字小字自适应）。
-  /// 0.60 是「铺满但不糊」的上限：再高就只剩几条缝，字会挤成噪点。
-  static const double maxCoverage = 0.60;
+  /// 铺到多满就清屏重来。
+  ///
+  /// 这个数**不是**眼睛看到的「满度」：它算的是每个字外接矩形的面积，
+  /// 而字形周围大半是空白（一个 'C#6' 的框里墨迹只占四成）。
+  /// 0.42 实测对应视觉上七成多满，正好是用户要的「75% 就清」。
+  /// 之前写 0.60 时视觉压到八九成，看着就是「铺爆了」。
+  static const double maxCoverage = 0.42;
 
-  /// 字幕数硬上限（防御：极小字可能很多但面积小）
-  static const int maxWords = 260;
+  /// 字数上限。光看面积不够：同一档面积里如果小字抽得多，能塞进
+  /// 一百二三十个碎字，观感比「大字少字」的一轮挤得多。用字数钉住上限。
+  static const int maxWords = 100;
 
   /// 基准字号占短边的比例
   static const double baseRatio = 0.045;
