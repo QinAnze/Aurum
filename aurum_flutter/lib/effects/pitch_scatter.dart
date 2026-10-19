@@ -1,27 +1,66 @@
 /// 音高散落（非歌词段 / 超长句后半段专用）。
 ///
 /// 与 [PitchBadge] 是**两套互不相干的视觉**，按相位二选一：
-///  - 人声段（歌词）：封面中央单个字母，从下升起 + 发光 —— 见 pitch_badge.dart
-///  - 乐器段（>8s 间隙 / 超长句 >8s 的部分）：**整块背景**随机散落，
-///    每换一个音就多一个字母，直接出现（无位移、无淡入、无光晕），
-///    放满就清空重来
+///  - 人声段（歌词）：封面中央一个**衬线**字母，从下升起 + 发光
+///    —— 见 pitch_badge.dart
+///  - 乐器段（>8s 间隙 / 超长句 >8s 的部分）：**整块背景**随机散落的
+///    **像素字**，每换一个音就多一个，放满就清空重来
 ///
-/// 落点：整个视口（含顶部），纯随机取点 + 矩形避让。之前只在下半屏的
-/// 一条横带里按列切片排，看着像「贴了一条字幕」，不是背景。
+/// 两套字体是刻意的：背景是街机/机器的质感（HYPixel），中央是乐谱的质感
+/// （EB Garamond），一眼就能分清现在处在哪个状态。
 ///
-/// 每个字母独立随机的三件事：
-///  - **字号**：分三档 —— 小（0.45–0.85 基准）/ 中（1.0–1.9）/ 巨（2.8–5.2）。
-///    巨型字是整片背景的视觉锚点，刻意只占少数（8%）。
+/// 落点：整个视口（含顶部），纯随机取点 + 矩形避让。
+///
+/// 每个字母独立随机的四件事：
+///  - **字号**：分三档 —— 小（0.45–0.85 基准）/ 中（1.0–1.9）/ 巨（3.0–5.2）。
+///    巨型字是整片背景的视觉锚点，刻意只占少数。
 ///  - **方向**：约 1/4 竖排（逐字换行），其余横排。
 ///  - **颜色**：从封面取色板里随机挑，再各自微调亮度。
+///  - **入场**：见 [ScatterEntrance]，六种随机，掉下来/翻滚/翻转/放大…
 ///
-/// 字体用打包在 `assets/` 里的 **EB Garamond**（衬线）：巨型字用 Regular，
-/// 细衬线在大字号下更耐看；小字用 SemiBold，保证小尺寸下也清楚。
+/// 相位从散落切回中央时，屏上的字会被**吸向封面中心并缩小消失**
+/// （[PitchScatterController.suckTo]），吸完才轮到中央字母出现。
 library;
 
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+
+/// 入场动画的种类，每个字随机抽一个
+enum ScatterEntrance {
+  /// 从上方加速掉下来
+  drop,
+
+  /// 从右侧翻滚着滚进来（整圈旋转）
+  roll,
+
+  /// 从下方甩上来（带一点回弹过冲）
+  swing,
+
+  /// 像翻牌一样绕水平轴翻开
+  flip,
+
+  /// 从很大缩到正常
+  zoom,
+
+  /// 从左侧滑进来
+  slide,
+}
+
+/// 一个字当前的呈现姿态：位移 / 缩放 / 旋转 / 透明度。
+///
+/// 由 [PitchScatterController.tick] 每帧算好写进来，widget 只读不写。
+class ScatterPose {
+  double dx = 0;
+  double dy = 0;
+  double sx = 1;
+  double sy = 1;
+  double angle = 0;
+  double alpha = 1;
+
+  bool get isIdentity =>
+      dx == 0 && dy == 0 && sx == 1 && sy == 1 && angle == 0 && alpha == 1;
+}
 
 /// 一个已经落位的音高字
 class ScatterWord {
@@ -33,6 +72,7 @@ class ScatterWord {
     required this.color,
     required this.width,
     required this.height,
+    required this.entrance,
     this.vertical = false,
     this.giant = false,
   });
@@ -46,15 +86,38 @@ class ScatterWord {
 
   /// 落位时量出的文本尺寸。渲染时必须用它约束 Text：只给 left/top 的话，
   /// Text 的可用宽度是「视口宽 − x」，靠右的字会被挤成自动换行，
-  /// 位置与避让矩形全对不上（实测小字会压在大字上、右侧还会被裁掉）。
+  /// 位置与避让矩形全对不上。
   final double width;
   final double height;
 
   /// true = 竖排（逐字换行）
   final bool vertical;
 
-  /// true = 巨型档（用细衬线的 Regular，透明度更低）
+  /// true = 巨型档（透明度更低，当背景而不是墙）
   final bool giant;
+
+  /// 入场动画种类
+  final ScatterEntrance entrance;
+
+  /// 当前姿态（controller 每帧刷新）
+  final ScatterPose pose = ScatterPose();
+
+  /// 入场进度 0..1
+  double anim = 0;
+
+  /// 被吸入的延迟（秒）：离中心越远越晚起步，形成"被卷走"的层次
+  double suckDelay = 0;
+
+  /// 吸入开始时的角度。吸入过程中角度要在它基础上叠加，
+  /// 直接用 pose.angle 会每帧累加、字越吸越歪。
+  double suckAngle0 = 0;
+
+  /// 被吸入的进度 0..1（null 表示还没开始吸）
+  double? suck;
+
+  /// 中心点（世界坐标），吸入时用
+  double centerX = 0;
+  double centerY = 0;
 
   /// 实际绘制用的文本：竖排时逐字换行，升号 `#` 跟在前一个音名后
   /// （'C#4' → 'C#\n4'），否则会读成「C / 井号 / 4」三行，中间那个符号很怪。
@@ -70,8 +133,7 @@ class _Rect {
   ///
   /// 第二、四个条件必须用 `ow`/`oh`（候选自己的宽高）。这里一度写成了
   /// `ox + w` / `oy + h`（已放置矩形的宽高）—— 候选比已有字**更宽**时，
-  /// 判定反而更容易通过，大字就会直接压在小字上，而测试只查位置、
-  /// 查不出这种重叠。
+  /// 判定反而更容易通过，大字就会直接压在小字上。
   bool hits(double ox, double oy, double ow, double oh) =>
       ox < x + w && ox + ow > x && oy < y + h && oy + oh > y;
 }
@@ -84,8 +146,9 @@ class PitchScatterController {
   /// 已落位的字母（按放置顺序排列，画的时候可以整层重建）
   final List<ScatterWord> words = [];
 
-  /// 字体族：assets/ 里打包的衬线体（见 pubspec.yaml）
-  static const String fontFamily = 'AurumSerif';
+  /// 字体族：assets/ 里打包的像素字体（见 pubspec.yaml）。
+  /// 与中央字母的 `AurumSerif` 是两套。
+  static const String fontFamily = 'AurumPixel';
 
   /// 竖排概率
   static const double verticalChance = 0.26;
@@ -98,7 +161,6 @@ class PitchScatterController {
   /// 这个数**不是**眼睛看到的「满度」：它算的是每个字外接矩形的面积，
   /// 而字形周围大半是空白（一个 'C#6' 的框里墨迹只占四成）。
   /// 0.42 实测对应视觉上七成多满，正好是用户要的「75% 就清」。
-  /// 之前写 0.60 时视觉压到八九成，看着就是「铺爆了」。
   static const double maxCoverage = 0.42;
 
   /// 字数上限。光看面积不够：同一档面积里如果小字抽得多，能塞进
@@ -107,6 +169,15 @@ class PitchScatterController {
 
   /// 基准字号占短边的比例
   static const double baseRatio = 0.045;
+
+  /// 入场动画时长（秒）
+  static const double entranceSec = 0.5;
+
+  /// 被吸走的时长（秒）：每个字各自跑这么久，再叠各自的延迟
+  static const double suckSec = 0.5;
+
+  /// 吸入延迟最多推迟多久（秒）
+  static const double suckSpread = 0.16;
 
   /// 竖排文本：逐字换行，升号 `#` 并到前一个音名后面（'C#4' → 'C#\n4'）
   static String verticalTextOf(String note) {
@@ -129,6 +200,10 @@ class PitchScatterController {
   /// 巨型字只占 8% 概率，一轮铺满可能一个都没抽到，背景就平了。
   int _sinceClear = 0;
 
+  /// 吸入状态：已进行的时长（秒）；null = 没在吸
+  double? _suckT;
+  double _suckTotal = 0;
+
   /// 当前取色板（来自封面采样）；空则退回白色
   List<Color> _palette = const [];
 
@@ -138,6 +213,12 @@ class PitchScatterController {
   Size get viewport => _size;
 
   bool get isEmpty => words.isEmpty;
+
+  /// 是否正在把字吸向中心
+  bool get sucking => _suckT != null;
+
+  /// 是否还有字在屏上（含正在被吸的）
+  bool get busy => words.isNotEmpty;
 
   /// 更新取色板（封面色变化时由外部每帧灌一次，不会重建已落位的字）
   void setPalette(List<Color> colors) {
@@ -161,8 +242,9 @@ class PitchScatterController {
     _size = size;
   }
 
-  /// 清空（进入人声段 / 切歌 / 关特效 / 铺满）
+  /// 清空（切歌 / 关特效 / 铺满）
   void clear() {
+    _suckT = null;
     if (words.isEmpty) return;
     words.clear();
     _placed = [];
@@ -170,18 +252,176 @@ class PitchScatterController {
     _sinceClear = 0;
   }
 
+  /// 把屏上所有字吸向 [target]（通常是封面中心），吸完自动清空。
+  ///
+  /// 从散落切回中央时用：字先被卷进专辑中心，中央字母随后才出现，
+  /// 两段视觉就接上了，不会「背景一空、字母凭空冒出来」。
+  void suckTo(Offset target) {
+    if (words.isEmpty) {
+      _suckT = null;
+      return;
+    }
+    // 离中心最远的距离，用来算各自延迟
+    var maxD = 1.0;
+    for (final w in words) {
+      w.centerX = w.x + w.width / 2;
+      w.centerY = w.y + w.height / 2;
+      final d = (Offset(w.centerX, w.centerY) - target).distance;
+      if (d > maxD) maxD = d;
+    }
+    for (final w in words) {
+      final d = (Offset(w.centerX, w.centerY) - target).distance;
+      w.suckDelay = (d / maxD) * suckSpread;
+      w.suck = null;
+      w.suckAngle0 = w.pose.angle;
+    }
+    _suckT = 0;
+    _suckTotal = suckSpread + suckSec;
+    _target = target;
+  }
+
+  Offset _target = Offset.zero;
+
+  /// 每帧推进一次：入场动画 + 吸入动画。
+  ///
+  /// 字落位之后本体是静态的，只有入场那 0.5s 和被吸走时才有位移，
+  /// 所以这里只在必要时改 pose；[dt] 为 0 时什么也不做。
+  void tick(double dt) {
+    if (words.isEmpty || dt <= 0) return;
+    final t = _suckT;
+    if (t != null) {
+      _suckT = t + dt;
+      if (_suckT! >= _suckTotal) {
+        clear();
+        return;
+      }
+    }
+    for (final w in words) {
+      _applyEntrance(w, dt);
+      if (t != null) _applySuck(w, _suckT!);
+    }
+  }
+
+  /// 停掉吸入（中途切回乐器段时用）：字留在原地，恢复到静止姿态
+  void cancelSuck() {
+    if (_suckT == null) return;
+    _suckT = null;
+    for (final w in words) {
+      w.suck = null;
+      w.pose
+        ..dx = 0
+        ..dy = 0
+        ..sx = 1
+        ..sy = 1
+        ..angle = 0
+        ..alpha = 1;
+    }
+  }
+
+  /* ---------------- 每帧姿态 ---------------- */
+
+  /// 入场：六种随机动画，都收在 [entranceSec] 内，结束后 pose 归位。
+  void _applyEntrance(ScatterWord w, double dt) {
+    if (w.anim >= 1) return;
+    w.anim = math.min(1.0, w.anim + dt / entranceSec);
+    final a = w.anim;
+    final h = _size.height;
+    final wd = _size.width;
+    // 缓动
+    final outC = _easeOutCubic(a);
+    final outBack = _easeOutBack(a);
+    final inQuad = a * a;
+    final fade = math.min(1.0, a * 4);
+
+    switch (w.entrance) {
+      case ScatterEntrance.drop:
+        // 从上方加速落下，末尾一点回弹；下落中带轻微摆角
+        w.pose
+          ..dy = -h * 0.42 * (1 - inQuad)
+          ..angle = (1 - a) * 0.18 * math.sin(a * math.pi * 2.5)
+          ..alpha = fade;
+      case ScatterEntrance.roll:
+        // 从右侧滚进来，整圈翻转
+        w.pose
+          ..dx = wd * 0.32 * (1 - outC)
+          ..angle = (1 - outC) * math.pi * 2
+          ..alpha = math.min(1.0, a * 5);
+      case ScatterEntrance.swing:
+        // 从下方甩上来，过冲一点再回落
+        w.pose
+          ..dy = h * 0.3 * (1 - outBack)
+          ..angle = -(1 - outBack) * 0.32
+          ..alpha = fade;
+      case ScatterEntrance.flip:
+        // 绕水平轴翻开：先压成一条线再张开
+        w.pose
+          ..sy = 0.04 + 0.96 * outBack
+          ..alpha = math.min(1.0, a * 3);
+      case ScatterEntrance.zoom:
+        // 从很大缩到正常
+        w.pose
+          ..sx = 1 + 2.4 * (1 - outBack)
+          ..sy = 1 + 2.4 * (1 - outBack)
+          ..alpha = math.min(1.0, a * 2.5);
+      case ScatterEntrance.slide:
+        // 从左侧滑入
+        w.pose
+          ..dx = -wd * 0.3 * (1 - outC)
+          ..alpha = math.min(1.0, a * 5);
+    }
+    if (w.anim >= 1) {
+      w.pose
+        ..dx = 0
+        ..dy = 0
+        ..sx = 1
+        ..sy = 1
+        ..angle = 0
+        ..alpha = 1;
+    }
+  }
+
+  /// 吸入：从落位飞向封面中心，同时缩小、淡出、轻轻旋转。
+  void _applySuck(ScatterWord w, double t) {
+    final local = ((t - w.suckDelay) / suckSec).clamp(0.0, 1.0);
+    w.suck = local;
+    if (local <= 0) return;
+    // 加速被吸走：越靠近中心越快
+    final e = local * local;
+    w.pose
+      ..dx = (_target.dx - w.centerX) * e
+      ..dy = (_target.dy - w.centerY) * e
+      ..sx = 1 - 0.86 * e
+      ..sy = 1 - 0.86 * e
+      ..angle = w.suckAngle0 + e * 0.5
+      ..alpha = 1 - e;
+  }
+
+  static double _easeOutCubic(double t) {
+    final u = 1 - t;
+    return 1 - u * u * u;
+  }
+
+  static double _easeOutBack(double t) {
+    const c1 = 1.70158;
+    const c3 = c1 + 1;
+    final u = t - 1;
+    return 1 + c3 * u * u * u + c1 * u * u;
+  }
+
+  /* ---------------- 落位 ---------------- */
+
   /// 每检测到一个新音高调用一次：[rnd] 外部注入，保证测试可确定性。
   ///
   /// 返回 false 表示这次没放上去。两种 false 要分开看：
   ///  - **铺满了**（面积/字数到顶）→ 清空，下一帧从空屏重来；
-  ///  - **只是这个字塞不进缝**（还没满，但它是巨型字）→ 保留已铺好的背景，
-  ///    这次少一个音而已。早期不区分，结果一个大字放不下就把整屏清掉，
-  ///    背景永远长不到铺满的样子。
+  ///  - **只是这个字塞不进缝**（还没满，但它是巨型字）→ 保留已铺好的背景。
   bool spawn(String note, {math.Random? rnd}) {
     final r = rnd ?? _rng;
     final size = _size;
     if (size.isEmpty || note.isEmpty) return false;
     layout(size);
+    // 正在被吸走的时候不接受新字：否则会把吸入中的字一起清掉
+    if (_suckT != null) return false;
     if (_isFull()) {
       clear();
       return false;
@@ -218,7 +458,7 @@ class PitchScatterController {
 
   /// 按档位抽字号（短边为基准，跟窗口一起缩放）
   ///
-  /// 三档之间刻意留断档（0.85 → 1.00、1.90 → 2.80）：连续分布只会得到
+  /// 三档之间刻意留断档（0.85 → 1.00、1.90 → 3.00）：连续分布只会得到
   /// 一堆「差不多大」的字，看起来还是均匀。断档才有大小节奏。
   static double _fontSizeFor(_Tier tier, math.Random r, Size size) {
     final base = math.max(10.0, size.shortestSide * baseRatio);
@@ -238,9 +478,11 @@ class PitchScatterController {
     final giant = tier == _Tier.giant;
     final fontSize = _fontSizeFor(tier, r, size) *
         (vertical ? verticalScale : 1.0);
+    final entrance = ScatterEntrance
+        .values[r.nextInt(ScatterEntrance.values.length)];
     final text = vertical ? verticalTextOf(note) : note;
-    final (tw, th) =
-        measure(text, fontSize, vertical: vertical, giant: giant);
+    final (tw, th) = measure(text, fontSize, vertical: vertical);
+
     if (tw <= 0 || th <= 0) return false;
     if (tw > size.width - 8 || th > size.height - 8) return false;
 
@@ -256,8 +498,7 @@ class PitchScatterController {
       _Tier.medium => 90,
       _Tier.small => 50,
     };
-    // 边距：衬线的字肩、斜体的伸出会超出 advance width，贴边会被裁掉；
-    // 字与字之间也要留一点缝，不然紧贴的衬线看起来像叠在一起。
+    // 边距：像素字的字肩会顶到框边，贴边会被裁掉；字与字之间也留缝。
     const pad = 8.0;
     const margin = 6.0;
     final maxX = math.max(margin, size.width - tw - margin);
@@ -270,7 +511,7 @@ class PitchScatterController {
           (p) => p.hits(x - pad, y - pad, tw + pad * 2, th + pad * 2))) {
         continue;
       }
-      _place(note, vertical, giant, x, y, tw, th, fontSize, r);
+      _place(note, vertical, giant, entrance, x, y, tw, th, fontSize, r);
       return true;
     }
     return false;
@@ -290,6 +531,7 @@ class PitchScatterController {
     String note,
     bool vertical,
     bool giant,
+    ScatterEntrance entrance,
     double x,
     double y,
     double tw,
@@ -297,7 +539,7 @@ class PitchScatterController {
     double fontSize,
     math.Random r,
   ) {
-    words.add(ScatterWord(
+    final w = ScatterWord(
       note: note,
       x: x,
       y: y,
@@ -307,7 +549,11 @@ class PitchScatterController {
       height: th,
       vertical: vertical,
       giant: giant,
-    ));
+      entrance: entrance,
+    );
+    // 入场从"还没出现"开始：pose 归位由第一帧 tick 推出来
+    w.pose.alpha = 0;
+    words.add(w);
     _placed.add(_Rect(x, y, tw, th));
     _coverage += tw * th;
     _sinceClear++;
@@ -324,11 +570,11 @@ class PitchScatterController {
 
   /// 文本尺寸（用与绘制完全一致的 style，避免落位与实画错位）。
   static (double, double) measure(String text, double fontSize,
-      {bool vertical = false, bool giant = false}) {
+      {bool vertical = false}) {
     final tp = TextPainter(
       text: TextSpan(
         text: text,
-        style: styleFor(fontSize, giant: giant, vertical: vertical),
+        style: styleFor(fontSize, vertical: vertical),
       ),
       textDirection: TextDirection.ltr,
       maxLines: vertical ? null : 1,
@@ -338,26 +584,23 @@ class PitchScatterController {
 
   /// 纯字：**没有 shadows**（用户明确要求去掉发光）。颜色由每个字自己带。
   ///
-  /// 衬线体按字号换权重：巨型字用 Regular（细线在大字号下更好看），
-  /// 其余用 SemiBold（小尺寸下笔画才立得住）。竖排行距压到 0.78。
-  ///
   /// `inherit: false` 是必须的：默认 true 时会和 Material 的
-  /// `DefaultTextStyle` 合并，凭空多出下划线（预览时整片字下面一道黄线）
-  /// 以及不同的行高 —— 行高一变，`measure` 量的框就和实际画的框对不上，
-  /// 避让失效，字开始互相压。
+  /// `DefaultTextStyle` 合并，凭空多出下划线，行高也会变 —— 行高一变，
+  /// [measure] 量的框就和实际画的框对不上，避让失效，字开始互相压。
+  ///
+  /// 像素字体只有一个字重，`fontWeight` 直接忽略（传 bold 会让引擎合成
+  /// 假粗体，把像素边糊掉）。
   static TextStyle styleFor(
     double fontSize, {
     Color? color,
-    bool giant = false,
     bool vertical = false,
   }) =>
       TextStyle(
         inherit: false,
         fontFamily: fontFamily,
-        fontWeight: giant ? FontWeight.w400 : FontWeight.w600,
         fontSize: fontSize,
-        // EB Garamond 的 ascent+descent ≈ 1.2em，竖排要压到 0.78 才紧凑
-        height: vertical ? 0.78 : 1.0,
+        // 像素字自带很紧的行高，竖排压到 0.9 就够
+        height: vertical ? 0.9 : 1.0,
         letterSpacing: vertical ? 0 : -0.01 * fontSize,
         color: color ?? Colors.white.withValues(alpha: 0.93),
         decoration: TextDecoration.none,
@@ -365,8 +608,6 @@ class PitchScatterController {
 }
 
 /// 显示层：把 [PitchScatterController.words] 画满整屏。
-///
-/// 刻意不做任何动画（不淡入、不上浮）：字是「出现」而不是「蹦出来」。
 class PitchScatter extends StatelessWidget {
   const PitchScatter({super.key, required this.controller});
 
@@ -386,20 +627,42 @@ class PitchScatter extends StatelessWidget {
                 // 显式宽高：不给的话 Text 会按「剩余宽度」自动换行
                 width: w.width,
                 height: w.height,
-                child: Text(
-                  w.text,
-                  textAlign: TextAlign.center,
-                  style: PitchScatterController.styleFor(
-                    w.size,
-                    color: w.color,
-                    giant: w.giant,
-                    vertical: w.vertical,
-                  ),
-                ),
+                child: _posed(w),
               ),
           ],
         ),
       ),
     );
+  }
+
+  /// 把 pose 套到字上：位移 → 旋转 → 缩放 → 透明度
+  Widget _posed(ScatterWord w) {
+    final p = w.pose;
+    Widget child = Text(
+      w.text,
+      textAlign: TextAlign.center,
+      style: PitchScatterController.styleFor(
+        w.size,
+        color: w.color,
+        vertical: w.vertical,
+      ),
+    );
+    if (p.alpha < 0.999) {
+      child = Opacity(opacity: p.alpha.clamp(0.0, 1.0), child: child);
+    }
+    if (p.sx != 1 || p.sy != 1) {
+      child = Transform(
+        alignment: Alignment.center,
+        transform: Matrix4.diagonal3Values(p.sx, p.sy, 1),
+        child: child,
+      );
+    }
+    if (p.angle != 0) {
+      child = Transform.rotate(angle: p.angle, child: child);
+    }
+    if (p.dx != 0 || p.dy != 0) {
+      child = Transform.translate(offset: Offset(p.dx, p.dy), child: child);
+    }
+    return child;
   }
 }

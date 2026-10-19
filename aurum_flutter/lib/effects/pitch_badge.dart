@@ -136,11 +136,13 @@ class _PitchBadgeState extends State<PitchBadge>
                   // 入场时更亮，落位后收敛成常亮光晕
                   final glow = size * (0.32 + 0.58 * math.pow(1 - v, 3));
                   final style = TextStyle(
-                    fontFamily: 'SmileySans',
-                    fontWeight: FontWeight.bold,
+                    // 歌词段的音高字母用衬线体（与背景平铺的像素字区分开）
+                    inherit: false,
+                    fontFamily: 'AurumSerif',
+                    fontWeight: FontWeight.w600,
                     fontSize: size,
                     height: 1.0,
-                    letterSpacing: -0.02 * size,
+                    letterSpacing: -0.01 * size,
                     color: Colors.white.withValues(alpha: 0.96 * alpha),
                     shadows: [
                       Shadow(

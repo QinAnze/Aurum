@@ -131,11 +131,22 @@ class VizController extends ChangeNotifier implements TickerProvider {
   /// 封面全局矩形（音高字母落点）
   Rect? get coverRect => _coverRect;
 
+  /// 散落字被吸向哪里：封面中心；封面还没布局出来就退到画布中心
+  Offset _suckTarget() {
+    final r = _coverRect;
+    if (r != null && !r.isEmpty) return r.center;
+    if (_canvasSize.isEmpty) return Offset.zero;
+    return Offset(_canvasSize.width / 2, _canvasSize.height / 2);
+  }
+
   /// 当前该显示的音名：**只在人声段**有值（封面中央那个字母）。
-  /// 乐器段改走底部散落（[scatter]），这里返回 null，两者不会同时出现。
+  /// 乐器段改走背景散落（[scatter]），两者不会同时出现。
   String? get pitchNote => switch (window.phase) {
-        // 唱完静 0.6s 就让字母落下去（>8s 段落前先收，段开始再升上来）
-        PitchPhase.vocal => window.silence > 0.6 ? null : vocal.note,
+        // 散落还在被吸向中心时先不显示：让"吸进去"这一个动作演完，
+        // 中央字母再接上，否则两段会同时出现在同一帧，看着像打架。
+        // 唱完静 0.6s 也让字母落下去（>8s 段落前先收，段开始再升上来）。
+        PitchPhase.vocal =>
+          (scatter.sucking || window.silence > 0.6) ? null : vocal.note,
         PitchPhase.instrument => null,
         PitchPhase.off => null,
       };
@@ -254,9 +265,19 @@ class VizController extends ChangeNotifier implements TickerProvider {
         // 换相位就清空对应检测器：新窗口从零开始取音
         if (phase == PitchPhase.vocal) vocal.reset();
         if (phase == PitchPhase.instrument) pitch.reset();
-        // 进入人声段 / 离开乐器段：散落字立刻清空，交给中央字母
-        if (phase != PitchPhase.instrument) scatter.clear();
+        if (phase == PitchPhase.vocal) {
+          // 散落 → 中央：把屏上的字**吸向封面中心**，吸完才出中央字母。
+          // 直接 clear 会让背景"啪"地空掉、字母凭空冒出来，两段接不上。
+          scatter.suckTo(_suckTarget());
+        } else if (phase == PitchPhase.instrument) {
+          // 中途又切回乐器段：放弃吸入，字留在原地别凭空消失
+          scatter.cancelSuck();
+        } else {
+          scatter.clear();
+        }
       }
+      // 散落的入场/吸走动画要逐帧推进（字落位之后本身是静态的）
+      scatter.tick(dt);
       if (phase == PitchPhase.instrument && playing && real) {
         final rev = pitch.revision;
         if (pitch.update(wave, active: true) && pitch.revision != rev) {

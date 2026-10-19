@@ -17,13 +17,8 @@ void main() {
   setUpAll(() async {
     TestWidgetsFlutterBinding.ensureInitialized();
     final loader = FontLoader(PitchScatterController.fontFamily);
-    for (final path in [
-      'assets/EBGaramond-Regular.ttf',
-      'assets/EBGaramond-SemiBold.ttf',
-    ]) {
-      loader.addFont(
-          Future.value(ByteData.sublistView(File(path).readAsBytesSync())));
-    }
+    loader.addFont(Future.value(ByteData.sublistView(
+        File('assets/HYPixel11pxU-2.ttf').readAsBytesSync())));
     await loader.load();
   });
 
@@ -94,14 +89,12 @@ void main() {
     expect(c.words, hasLength(1));
   });
 
-  test('文本样式：衬线字体、不带发光（无 shadows）', () {
+  test('文本样式：像素字体、不带发光（无 shadows）', () {
     final s = PitchScatterController.styleFor(24);
     expect(s.shadows, isNull);
-    expect(s.fontFamily, 'AurumSerif');
-    // 巨型字走细衬线的 Regular，其余走 SemiBold
-    expect(PitchScatterController.styleFor(24, giant: true).fontWeight,
-        FontWeight.w400);
-    expect(s.fontWeight, FontWeight.w600);
+    expect(s.fontFamily, 'AurumPixel');
+    // 像素字只有一个字重：传 bold 会让引擎合成假粗体，把像素边糊掉
+    expect(s.fontWeight, isNull);
   });
 
   test('字号跨度极大：既有小字也有巨型字', () {
@@ -143,13 +136,120 @@ void main() {
   });
 
   test('字形矩形两两不相交（落位避让真的生效）', () {
+    // 次数控制在「一轮还没铺满」以内：中途清屏会把检查对象清掉
     final c = make();
     final rnd = math.Random(4);
-    for (var i = 0; i < 78; i++) {
+    for (var i = 0; i < 40; i++) {
       c.spawn('C#6', rnd: rnd);
     }
-    expect(c.words.length, greaterThan(40));
+    expect(c.words.length, greaterThan(20));
     _expectNoOverlap(c);
+  });
+
+  /* ---------------- 入场动画 ---------------- */
+
+  test('入场：刚落位时是「还没出现」，0.5s 后归位', () {
+    final c = make();
+    c.spawn('E5', rnd: math.Random(2));
+    final w = c.words.single;
+    expect(w.anim, 0, reason: '刚落位还没开始演');
+    expect(w.pose.alpha, 0, reason: '入场第一帧应当不可见');
+
+    // 推进半程：应当已经可见、且还带着位移/旋转/缩放中的某一个
+    for (var i = 0; i < 15; i++) {
+      c.tick(0.016);
+    }
+    expect(w.anim, greaterThan(0.3));
+    expect(w.pose.alpha, greaterThan(0.0));
+
+    // 跑满 0.5s：姿态必须完全归位，否则字会永远歪着
+    for (var i = 0; i < 40; i++) {
+      c.tick(0.016);
+    }
+    expect(w.anim, 1);
+    expect(w.pose.isIdentity, isTrue,
+        reason: '入场结束后 dx/dy/缩放/旋转/透明度都要回到默认');
+  });
+
+  test('入场：六种动画都会出现，且都给得出非零的姿态变化', () {
+    final seen = <ScatterEntrance>{};
+    for (var seed = 0; seed < 60; seed++) {
+      final c = make();
+      c.spawn('A4', rnd: math.Random(seed));
+      final w = c.words.single;
+      seen.add(w.entrance);
+      // 推进到 30% 左右，看姿态有没有动
+      for (var i = 0; i < 10; i++) {
+        c.tick(0.016);
+      }
+      expect(w.pose.isIdentity, isFalse,
+          reason: '${w.entrance} 在入场途中应当有位移/旋转/缩放');
+    }
+    expect(seen.length, ScatterEntrance.values.length,
+        reason: '六种入场动画都要能被抽到');
+  });
+
+  /* ---------------- 被吸向中心 ---------------- */
+
+  test('吸入：字向中心靠拢、缩小、淡出，最后清空', () {
+    final c = make();
+    final rnd = math.Random(9);
+    for (var i = 0; i < 30; i++) {
+      c.spawn('C5', rnd: rnd);
+    }
+    // 先把入场演完，免得两套动画叠在一起看不清
+    for (var i = 0; i < 40; i++) {
+      c.tick(0.016);
+    }
+    final before = List.of(c.words);
+    const target = Offset(640, 400);
+    c.suckTo(target);
+    expect(c.sucking, isTrue);
+    expect(before.first.suckDelay, greaterThanOrEqualTo(0));
+    expect(before.first.suckDelay, lessThanOrEqualTo(
+        PitchScatterController.suckSpread + 1e-9));
+
+    // 演到一半：还在，但已经往中心挪了、并且变小了
+    final half = (PitchScatterController.suckSpread +
+            PitchScatterController.suckSec) /
+        2;
+    for (var t = 0.0; t < half; t += 0.016) {
+      c.tick(0.016);
+    }
+    expect(c.words, isNotEmpty);
+    final mid = c.words.first;
+    final startDist =
+        (Offset(mid.centerX, mid.centerY) - target).distance;
+    final nowDist = (Offset(mid.centerX + mid.pose.dx, mid.centerY + mid.pose.dy) -
+            target)
+        .distance;
+    expect(nowDist, lessThan(startDist + 1e-6), reason: '应当朝中心移动');
+    expect(mid.pose.sx, lessThan(1.0), reason: '应当缩小');
+    expect(mid.pose.alpha, lessThan(1.0), reason: '应当淡出');
+
+    // 跑完：清空、sucking 归 false
+    for (var i = 0; i < 120; i++) {
+      c.tick(0.016);
+    }
+    expect(c.isEmpty, isTrue);
+    expect(c.sucking, isFalse);
+  });
+
+  test('吸入期间不接受新字；cancelSuck 能把字留在原地', () {
+    final c = make();
+    for (var i = 0; i < 10; i++) {
+      c.spawn('D4', rnd: math.Random(i));
+    }
+    c.suckTo(const Offset(600, 400));
+    expect(c.spawn('E5', rnd: math.Random(1)), isFalse,
+        reason: '正在吸走时不能让新字把这一屏清掉');
+
+    c.cancelSuck();
+    expect(c.sucking, isFalse);
+    expect(c.words, isNotEmpty, reason: '取消吸入不应把字弄没');
+    for (final w in c.words) {
+      expect(w.pose.isIdentity, isTrue, reason: '取消后要回到静止姿态');
+    }
   });
 
   test('颜色取自封面取色板，不是清一色白', () {

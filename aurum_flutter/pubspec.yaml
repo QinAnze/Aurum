@@ -31,11 +31,16 @@ flutter:
     - family: SmileySans
       fonts:
         - asset: assets/SmileySans-Oblique.ttf
-    # 衬线：乐器段平铺的音高字（EB Garamond，SIL OFL 1.1）。
-    # 大字用 Regular（细衬线在超大字号下更好看），小字用 SemiBold（可读）。
+    # 衬线：歌词段封面中央那个音高字母（EB Garamond，SIL OFL 1.1）。
     - family: AurumSerif
       fonts:
         - asset: assets/EBGaramond-Regular.ttf
           weight: 400
         - asset: assets/EBGaramond-SemiBold.ttf
           weight: 600
+    # 像素字：乐器段平铺在背景上的音高字（HYPixel 11px）。
+    # 与中央的衬线字母刻意用两套字体 —— 背景是街机/机器的质感，
+    # 中央是乐谱的质感，一眼就能分清两个状态。
+    - family: AurumPixel
+      fonts:
+        - asset: assets/HYPixel11pxU-2.ttf
