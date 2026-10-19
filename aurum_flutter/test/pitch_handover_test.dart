@@ -117,7 +117,6 @@ void main() {
     expect(viz.pitchGlow, greaterThan(0.05), reason: '高潮时音高字要发光');
     // 平铺控制器也拿到了同一份脉动
     expect(viz.scatter.pulse, closeTo(viz.pitchScale, 0.02));
-    expect(viz.scatter.glow, greaterThan(0.0));
     viz.dispose();
   });
 

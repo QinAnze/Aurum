@@ -232,36 +232,26 @@ class PitchScatterController {
 
   /// 随音乐能量脉动的整体放大系数（1 = 原尺寸）。
   /// 与中央字母、歌曲标题同一套语言：climax 越高字越大。
+  ///
+  /// **只放大、不发光**：一百来个字各自带两层模糊阴影时，
+  /// 每帧都要重建上百个大半径的图层，实测直接卡到掉帧。
+  /// 发光留给中央那个字母（只有一个，随便糊）。
   double _pulse = 1;
-
-  /// 当前光晕强度 0..1 与半径 px（量化后的值，避免每帧重排文本）
-  double _glow = 0;
-  double _blur = 0;
 
   /// 当前取色板（来自封面采样）；空则退回白色
   List<Color> _palette = const [];
 
   /// 整体脉动放大系数
   double get pulse => _pulse;
-  /// 当前光晕强度（0..1）
-  double get glow => _glow;
-  /// 当前光晕半径（px）
-  double get blur => _blur;
 
-  /// 每帧由 [VizController] 灌入：climax 驱动的放大与发光。
+  /// 每帧由 [VizController] 灌入：climax 驱动的放大。
   ///
-  /// 必须**量化**：climax 每帧都在动，若把连续值直接塞进 TextStyle，
-  /// 每帧都是新样式 → 每个 Text 都重新排版（一百来个字就是灾难）。
-  /// 量化后绝大多数帧样式完全相同，只有外层 Transform 换矩阵。
-  void setPulse(double scale, double glow, double blur) {
-    // 放大系数也量化到 1%：climax 每帧都在动，不量化就没有缓存命中
+  /// 必须**量化**：climax 每帧都在动，连续值会让每帧都换一个新矩阵。
+  /// 量化到 1% 后绝大多数帧完全相同，可以直接跳过重建。
+  void setPulse(double scale) {
     final sc = ((scale.clamp(1.0, 2.0)) * 100).round() / 100;
-    final g = ((glow.clamp(0.0, 1.0)) * 24).round() / 24;
-    final b = ((blur.clamp(0.0, 96.0)) * 2).round() / 2;
-    if (sc == _pulse && g == _glow && b == _blur) return;
+    if (sc == _pulse) return;
     _pulse = sc;
-    _glow = g;
-    _blur = b;
   }
 
   Size _size = Size.zero;
@@ -720,41 +710,25 @@ class PitchScatterController {
   ///
   /// 像素字体只有一个字重，`fontWeight` 直接忽略（传 bold 会让引擎合成
   /// 假粗体，把像素边糊掉）。
-  /// 光晕：与歌曲标题同一套做法 —— 两层同色 shadow（近处一层亮、
-  /// 远处一层大半径），强度与半径都随 climax 走，归零就没有。
-  /// 光晕贴在字形 alpha 上，不是字下面垫一块背景块。
+  /// 纯字：**不带 shadows**。
+  ///
+  /// 不是没试过 —— 一百来个字各带两层模糊阴影，等于每帧重建上百个
+  /// 大半径图层，实测直接卡。发光只留给中央那个字母。
   static TextStyle styleFor(
     double fontSize, {
     Color? color,
     bool vertical = false,
-    double glow = 0,
-    double blur = 0,
-  }) {
-    final c = color ?? Colors.white.withValues(alpha: 0.93);
-    final g = glow.clamp(0.0, 1.0);
-    return TextStyle(
-      inherit: false,
-      fontFamily: fontFamily,
-      fontSize: fontSize,
-      // 像素字自带很紧的行高，竖排压到 0.9 就够
-      height: vertical ? 0.9 : 1.0,
-      letterSpacing: vertical ? 0 : -0.01 * fontSize,
-      color: c,
-      decoration: TextDecoration.none,
-      shadows: g <= 0.001
-          ? null
-          : [
-              Shadow(
-                color: c.withValues(alpha: 0.72 * g),
-                blurRadius: blur * 0.45,
-              ),
-              Shadow(
-                color: c.withValues(alpha: 0.40 * g),
-                blurRadius: blur,
-              ),
-            ],
-    );
-  }
+  }) =>
+      TextStyle(
+        inherit: false,
+        fontFamily: fontFamily,
+        fontSize: fontSize,
+        // 像素字自带很紧的行高，竖排压到 0.9 就够
+        height: vertical ? 0.9 : 1.0,
+        letterSpacing: vertical ? 0 : -0.01 * fontSize,
+        color: color ?? Colors.white.withValues(alpha: 0.93),
+        decoration: TextDecoration.none,
+      );
 }
 
 /// 显示层：把 [PitchScatterController.words] 画满整屏。
@@ -767,8 +741,6 @@ class PitchScatter extends StatelessWidget {
   Widget build(BuildContext context) {
     if (controller.words.isEmpty) return const SizedBox.shrink();
     final pulse = controller.pulse;
-    final glow = controller.glow;
-    final blur = controller.blur;
     return IgnorePointer(
       child: SizedBox.expand(
         child: Stack(
@@ -780,7 +752,7 @@ class PitchScatter extends StatelessWidget {
                 // 显式宽高：不给的话 Text 会按「剩余宽度」自动换行
                 width: w.width,
                 height: w.height,
-                child: _posed(w, pulse: pulse, glow: glow, blur: blur),
+                child: _posed(w, pulse: pulse),
               ),
           ],
         ),
@@ -789,12 +761,7 @@ class PitchScatter extends StatelessWidget {
   }
 
   /// 把 pose 套到字上：位移 → 旋转 → 缩放 → 透明度
-  Widget _posed(
-    ScatterWord w, {
-    required double pulse,
-    required double glow,
-    required double blur,
-  }) {
+  Widget _posed(ScatterWord w, {required double pulse}) {
     final p = w.pose;
     Widget child = Text(
       w.text,
@@ -803,8 +770,6 @@ class PitchScatter extends StatelessWidget {
         w.size,
         color: w.color,
         vertical: w.vertical,
-        glow: glow,
-        blur: blur,
       ),
     );
     if (p.alpha < 0.999) {

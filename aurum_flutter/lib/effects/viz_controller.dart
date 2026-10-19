@@ -382,7 +382,8 @@ class VizController extends ChangeNotifier implements TickerProvider {
       pitchBlur = 0;
       pitchScale = 1;
     }
-    scatter.setPulse(pitchScale, pitchGlow, pitchBlur);
+    // 平铺只吃放大；发光只给中央字母（上百个字带阴影会卡）
+    scatter.setPulse(pitchScale);
 
     /* ---- 背后词云：随高潮整体非线性放大 + 同步轻微抖动 ---- */
     if (oc && climax > 0.01) {
