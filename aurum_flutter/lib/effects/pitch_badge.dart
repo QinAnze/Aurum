@@ -23,6 +23,9 @@ class PitchBadge extends StatefulWidget {
     required this.revision,
     required this.rect,
     required this.c1,
+    this.glow = 0,
+    this.blur = 0,
+    this.scale = 1,
   });
 
   /// 音名（'E5'）；null 表示不显示
@@ -33,6 +36,13 @@ class PitchBadge extends StatefulWidget {
   final Rect? rect;
   /// 主题主色（光晕颜色）
   final Color c1;
+
+  /// climax 驱动的光晕强度 0..1（与歌曲标题同一套）
+  final double glow;
+  /// climax 驱动的光晕半径 px
+  final double blur;
+  /// climax 驱动的放大系数（>=1）
+  final double scale;
 
   @override
   State<PitchBadge> createState() => _PitchBadgeState();
@@ -133,8 +143,15 @@ class _PitchBadgeState extends State<PitchBadge>
                   final alpha = _leaving
                       ? (1 - math.pow(1 - v, 2.2) as double)
                       : math.min(1.0, v * 2.2);
-                  // 入场时更亮，落位后收敛成常亮光晕
-                  final glow = size * (0.32 + 0.58 * math.pow(1 - v, 3));
+                  // 入场时更亮，落位后收敛成常亮光晕；
+                  // 高潮时整体再亮一档、半径更大（与歌曲标题同一条曲线）
+                  // 量化：climax 每帧都在动，连续值会让 Text 每帧重排版
+                  final g = (widget.glow * 24).round() / 24;
+                  final b = (widget.blur * 2).round() / 2;
+                  final boost = 1 + g * 1.6;
+                  final glow =
+                      size * (0.32 + 0.58 * math.pow(1 - v, 3)) * boost;
+                  final aura = b;
                   final style = TextStyle(
                     // 歌词段的音高字母用衬线体（与背景平铺的像素字区分开）
                     inherit: false,
@@ -153,6 +170,13 @@ class _PitchBadgeState extends State<PitchBadge>
                         color: widget.c1.withValues(alpha: 0.55 * alpha),
                         blurRadius: glow * 2.4,
                       ),
+                      // 高潮时才有的第三层大光斑（半径由 climax 给）
+                      if (aura > 0.5)
+                        Shadow(
+                          color: widget.c1
+                              .withValues(alpha: 0.42 * alpha * g),
+                          blurRadius: aura,
+                        ),
                     ],
                   );
                   return Opacity(
@@ -160,7 +184,8 @@ class _PitchBadgeState extends State<PitchBadge>
                     child: Transform.translate(
                       offset: Offset(0, dy),
                       child: Transform.scale(
-                        scale: 0.96 + 0.04 * rise,
+                        // 入场时从 96% 顶到 100%，高潮再整体放大
+                        scale: (0.96 + 0.04 * rise) * widget.scale,
                         child: Text(note, style: style),
                       ),
                     ),

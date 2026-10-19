@@ -264,6 +264,10 @@ class _HomePageState extends State<HomePage> {
           revision: _viz.pitchRevision,
           rect: _viz.coverRect,
           c1: widget.app.c1,
+          // 与歌曲标题同一套 climax 驱动：发光 + 放大
+          glow: _viz.pitchGlow,
+          blur: _viz.pitchBlur,
+          scale: _viz.pitchScale,
         ),
       ),
     );

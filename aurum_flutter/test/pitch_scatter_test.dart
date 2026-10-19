@@ -282,6 +282,66 @@ void main() {
     }
   });
 
+  /* ---------------- 发光与脉动 ---------------- */
+
+  test('光晕：glow 为 0 时不带 shadows，越大越亮', () {
+    final off = PitchScatterController.styleFor(40);
+    expect(off.shadows, isNull, reason: '没有高潮就不要光晕');
+
+    final on = PitchScatterController.styleFor(40, glow: 0.6, blur: 12);
+    expect(on.shadows, hasLength(2), reason: '两层同色光晕（近亮远大）');
+    final weak = PitchScatterController.styleFor(40, glow: 0.2, blur: 4);
+    expect(weak.shadows!.first.color.a, lessThan(on.shadows!.first.color.a),
+        reason: '光晕强度应随 glow 变亮');
+    expect(on.shadows!.last.blurRadius, greaterThan(0));
+  });
+
+  test('脉动：setPulse 量化，避免每帧重排版', () {
+    final c = make();
+    c.setPulse(1.23456, 0.5001, 7.31);
+    // 量化到 1% / 1/24 / 0.5px
+    expect(c.pulse, closeTo(1.23, 1e-9));
+    expect(c.glow, closeTo(12 / 24, 1e-9));
+    expect(c.blur, closeTo(7.5, 1e-9));
+
+    // 极小的抖动不该改变已量化的值（否则每帧都是新样式）
+    c.setPulse(1.2301, 0.5004, 7.34);
+    expect(c.pulse, closeTo(1.23, 1e-9));
+    expect(c.glow, closeTo(12 / 24, 1e-9));
+    expect(c.blur, closeTo(7.5, 1e-9));
+  });
+
+  testWidgets('脉动真的把字放大（渲染层矩阵）', (tester) async {
+    final c = make();
+    c.spawn('E5', rnd: math.Random(3));
+    for (var i = 0; i < 40; i++) {
+      c.tick(0.016); // 演完入场
+    }
+    Future<double> maxScale() async {
+      await tester.pumpWidget(MaterialApp(
+        home: SizedBox(
+          width: 1280,
+          height: 800,
+          child: PitchScatter(controller: c),
+        ),
+      ));
+      await tester.pump();
+      var m = 0.0;
+      for (final t in tester.widgetList<Transform>(find.byType(Transform))) {
+        final v = t.transform.storage[0];
+        if (v > m) m = v;
+      }
+      // 缩放为 1 时 widget 会跳过 Transform，此时就是原尺寸
+      return m == 0 ? 1.0 : m;
+    }
+
+    c.setPulse(1, 0, 0);
+    expect(await maxScale(), closeTo(1.0, 0.001), reason: '没高潮时原尺寸');
+
+    c.setPulse(1.35, 1, 24);
+    expect(await maxScale(), closeTo(1.35, 0.001), reason: '高潮时放大');
+  });
+
   test('颜色取自封面取色板，不是清一色白', () {
     final c = make()
       ..setPalette(const [

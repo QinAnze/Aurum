@@ -103,6 +103,24 @@ void main() {
     viz.dispose();
   });
 
+  testWidgets('高潮时音高字与歌名同步发光放大', (tester) async {
+    final e = _Engine()..pos = 0.2;
+    final viz = _build(e);
+    viz.setCanvasSize(const Size(1280, 800));
+    viz.start();
+    // 响度足够时 climax 会爬上去（song title 用的是同一条曲线）
+    for (var i = 0; i < 40; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(viz.climax, greaterThan(0.1), reason: '需要先进入高潮段');
+    expect(viz.pitchScale, greaterThan(1.0), reason: '高潮时音高字要放大');
+    expect(viz.pitchGlow, greaterThan(0.05), reason: '高潮时音高字要发光');
+    // 平铺控制器也拿到了同一份脉动
+    expect(viz.scatter.pulse, closeTo(viz.pitchScale, 0.02));
+    expect(viz.scatter.glow, greaterThan(0.0));
+    viz.dispose();
+  });
+
   testWidgets('切到无歌词段时，背景词云立刻转成坠落', (tester) async {
     final e = _Engine()..pos = 0.2;
     final viz = _build(e);

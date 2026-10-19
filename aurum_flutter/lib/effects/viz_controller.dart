@@ -101,6 +101,10 @@ class VizController extends ChangeNotifier implements TickerProvider {
   /// 歌名/歌手容器：缩放 / 跷跷板角度(deg) / 光晕强度 / 光晕半径
   double npScale = 1, npAngle = 0, npGlow = 0, npBlur = 0;
 
+  /// 音高字（中央字母 + 背景平铺）的脉动：同一套 climax 驱动，
+  /// 幅度比歌名小一档 —— 平铺字铺满整屏，放太大就会互相压。
+  double pitchScale = 1, pitchGlow = 0, pitchBlur = 0;
+
   /// 词云画布整体变换
   double cloudScale = 1, cloudJx = 0, cloudJy = 0;
 
@@ -367,6 +371,19 @@ class VizController extends ChangeNotifier implements TickerProvider {
       npBlur = 0;
     }
 
+    /* ---- 音高字：与歌名同一套（climax 驱动发光 + 非线性放大）---- */
+    if (oc) {
+      pitchGlow = math.min(1, climax * 1.3);
+      pitchBlur = climax * 22;
+      // 幅度比歌名（0.65）小得多：平铺字铺满整屏，放到 1.35 就会糊成一片
+      pitchScale = 1 + math.pow(climax, 0.7) * 0.24;
+    } else {
+      pitchGlow = 0;
+      pitchBlur = 0;
+      pitchScale = 1;
+    }
+    scatter.setPulse(pitchScale, pitchGlow, pitchBlur);
+
     /* ---- 背后词云：随高潮整体非线性放大 + 同步轻微抖动 ---- */
     if (oc && climax > 0.01) {
       cloudScale = 1 + math.pow(climax, 0.8) * 0.06;
@@ -464,6 +481,9 @@ class VizController extends ChangeNotifier implements TickerProvider {
       npAngle = 0;
       npGlow = 0;
       npBlur = 0;
+      pitchScale = 1;
+      pitchGlow = 0;
+      pitchBlur = 0;
       cloudScale = 1;
       cloudJx = 0;
       cloudJy = 0;
