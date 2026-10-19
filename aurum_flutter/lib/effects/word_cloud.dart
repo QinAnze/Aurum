@@ -60,6 +60,10 @@ class CloudWord {
   double holdMs;
   double fallFrom = 0;
 
+  /// 这一颗词的坠落时长（ms）。正常换行用 [kFallMs]；相位切走时
+  /// （进入纯乐器段）用更短的值，让它赶在背景平铺开始前落完。
+  double fallMs = kFallMs.toDouble();
+
   TextPainter? _painter; // 横排
   List<TextPainter>? _chars; // 竖排逐字
   int _styleKey = -1; // (alpha,blur) 量化缓存键，未变则不重建文本布局
@@ -86,6 +90,12 @@ class WordCloudController {
 
   double get nowMs => clock.elapsedMilliseconds.toDouble();
 
+  /// 让屏上现有的词立刻错落坠落（相位离开歌词段时用）。
+  ///
+  /// 与 [reset] 的区别：这里是**落下去**（1 秒内的坠落动画），
+  /// 而 reset 是硬清空。`fallMs` 可以调短，好让位给背景平铺。
+  void dropCurrent({double? fallMs}) => _dropAll(fallMs: fallMs);
+
   void reset() {
     _placed = [];
     _chars = const [];
@@ -96,8 +106,9 @@ class WordCloudController {
   }
 
   /* ---------------- 换行：旧词错落坠落（cloudDropAll） ---------------- */
-  void _dropAll() {
+  void _dropAll({double? fallMs}) {
     final now = nowMs;
+    final fs = fallMs ?? kFallMs.toDouble();
     for (final wd in words) {
       if (wd.phase == 'fall') continue;
       if (wd.phase == 'rise') {
@@ -108,6 +119,7 @@ class WordCloudController {
         wd.fallFrom = wd.y;
       }
       wd.phase = 'fall';
+      wd.fallMs = fs;
       wd.t0 = now + _rng.nextDouble() * 120; // 错落坠落，不整齐划一
     }
   }
@@ -318,7 +330,7 @@ extension WordCloudAdvance on WordCloudController {
           wd.fallFrom = wd.y;
         }
       } else {
-        if ((now - wd.t0) / kFallMs >= 1) {
+        if ((now - wd.t0) / wd.fallMs >= 1) {
           words.removeAt(i);
         }
       }
@@ -360,14 +372,14 @@ class WordCloudPainter extends CustomPainter {
         y = wd.y;
         if (now - wd.t0 > wd.holdMs) {
           // advance() 未及时推进时兜底转换
-          final p = (now - wd.t0 - wd.holdMs) / kFallMs;
+          final p = (now - wd.t0 - wd.holdMs) / wd.fallMs;
           if (p >= 1) continue;
           y = wd.y + (math.pow(p, 2) as double) * (h + 40 - wd.y);
           alpha = 1 - (math.pow(p, 2.2) as double);
         }
       } else {
         // 坠落段：ease-in quad = 自由落体加速，淡出到底消失
-        final p = (now - wd.t0) / kFallMs;
+        final p = (now - wd.t0) / wd.fallMs;
         if (p < 0) {
           y = wd.fallFrom;
         } else if (p >= 1) {

@@ -1,0 +1,7 @@
+{
+    "dependencies": {
+        "@neteasecloudmusicapienhanced/api": "4.41.1",
+        "@yakult-green-tea/qq-music-api": "3.1.5",
+        "kugoumusicapi": "https://codeload.github.com/MakcRe/KuGouMusicApi/tar.gz/ba3645f2c89e6b9d4fec82ff783c15287e4c5f43"
+    }
+}

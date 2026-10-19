@@ -38,3 +38,6 @@ __chk.js
 # 本地临时构建缓存
 _rhine_build/
 _aurum_b*/
+
+# 本地调试截图 / 临时 fixture / 渲染输出
+desktop_qt/_dev/

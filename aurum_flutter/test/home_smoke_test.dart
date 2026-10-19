@@ -4,8 +4,10 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:aurum/audio/player_engine.dart';
+import 'package:aurum/effects/pitch_scatter.dart';
 import 'package:aurum/main.dart';
 import 'package:aurum/state/app_state.dart';
+import 'package:aurum/widgets/glass.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -56,6 +58,31 @@ class _StubEngine implements PlayerEngine {
   void dispose() {}
 }
 
+/// 返回 [finder] 命中的元素所在 Stack 的 children 下标，找不到返回 -1。
+int _stackIndexOf(WidgetTester tester, Finder finder) {
+  if (finder.evaluate().isEmpty) return -1;
+  final node = finder.evaluate().first;
+  Element? direct = node;
+  int? index;
+  node.visitAncestorElements((up) {
+    if (up.widget is Stack) {
+      final stack = up.widget as Stack;
+      var i = 0;
+      for (final child in stack.children) {
+        if (identical(child, direct!.widget)) {
+          index = i;
+          return false;
+        }
+        i++;
+      }
+      return false;
+    }
+    direct = up;
+    return true;
+  });
+  return index ?? -1;
+}
+
 void main() {
   testWidgets('HomePage 全树构建 smoke', (tester) async {
     // autoStart: false —— 启动搜索会打真实网络：CI 上接口通了会填满在线列表，
@@ -85,6 +112,63 @@ void main() {
     expect(find.text('OFF'), findsOneWidget);
 
     // 卸载整棵树（释放 ticker），并显式销毁 AppState（取消 toast 定时器）
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    app.dispose();
+  });
+
+  testWidgets('逐特效打勾框：排在总开关下面，各自独立', (tester) async {
+    final app = AppState(engine: _StubEngine(), autoStart: false);
+    await tester.pumpWidget(AurumApp(app: app));
+    await tester.runAsync(
+        () async => await Future.delayed(const Duration(milliseconds: 500)));
+    await tester.pump();
+
+    // 四个框都在，且总开关之下（y 坐标更大）
+    for (final label in ['词云', '频谱', '打光', '音高']) {
+      expect(find.text(label), findsOneWidget);
+    }
+    final toggleY = tester.getCenter(find.text('ON')).dy;
+    for (final label in ['词云', '频谱', '打光', '音高']) {
+      expect(tester.getCenter(find.text(label)).dy, greaterThan(toggleY));
+    }
+
+    // 单点「打光」：关掉它，其他三项与总开关不受影响
+    await tester.tap(find.byKey(const ValueKey('fx-check-kick')));
+    await tester.pump();
+    expect(app.fxOn, isTrue);
+    expect(app.fxKick, isFalse);
+    expect(app.fxCloud && app.fxSpectrum && app.fxPitch, isTrue);
+    expect(app.fxItemOn('kick'), isFalse);
+    expect(app.fxItemOn('cloud'), isTrue);
+
+    // 总开关关掉 → 所有特效实测都关；再点一次单项会顺手把总开关打开
+    await tester.tap(find.text('ON'));
+    await tester.pump();
+    expect(app.fxItemOn('cloud'), isFalse);
+    await tester.tap(find.byKey(const ValueKey('fx-check-cloud')));
+    await tester.pump();
+    expect(app.fxOn, isTrue);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    app.dispose();
+  });
+
+  testWidgets('音高散落铺在背景层，不压住播放器面板', (tester) async {
+    final app = AppState(engine: _StubEngine(), autoStart: false);
+    await tester.pumpWidget(AurumApp(app: app));
+    await tester.runAsync(
+        () async => await Future.delayed(const Duration(milliseconds: 500)));
+    await tester.pump();
+
+    // 音高散落与播放器面板的同层顺序：散落必须在面板**之前**（更靠下）
+    final panelIdx = _stackIndexOf(tester, find.byType(GlassPanel).first);
+    final scatterIdx = _stackIndexOf(tester, find.byType(PitchScatter));
+    expect(scatterIdx, isNonNegative, reason: '音高特效开着时散落层应存在');
+    expect(scatterIdx, lessThan(panelIdx),
+        reason: '散落是背景层，必须在播放器面板之下');
+
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
     app.dispose();
