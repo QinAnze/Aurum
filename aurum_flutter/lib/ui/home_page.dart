@@ -61,6 +61,7 @@ class _HomePageState extends State<HomePage> {
       fxPitch: () => widget.app.fxPitch,
       lyrics: () => widget.app.lyrics,
       cloudColorsFn: () => cloudColors(widget.app.palette ?? const []),
+      coverPaletteFn: () => widget.app.palette ?? const [],
       cloud: _cloud,
     );
     widget.app.addListener(_onApp);

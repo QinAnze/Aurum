@@ -76,4 +76,45 @@ void main() {
     expect(s.shadows, isNull);
     expect(s.fontFamily, 'SmileySans');
   });
+
+  test('字号不是一律相同：有大小差异', () {
+    final c = make();
+    final rnd = math.Random(5);
+    for (var i = 0; i < 24; i++) {
+      c.spawn('F4', rnd: rnd);
+    }
+    final sizes = c.words.map((w) => w.size).toSet();
+    expect(sizes.length, greaterThan(4), reason: '每个字大小应随机抖动');
+    final min = c.words.map((w) => w.size).reduce(math.min);
+    final max = c.words.map((w) => w.size).reduce(math.max);
+    expect(max / min, greaterThan(1.5), reason: '大小差异要看得见');
+  });
+
+  test('颜色取自封面取色板，不是清一色白', () {
+    final c = make()
+      ..setPalette(const [
+        Color(0xFFC0392B), // 红
+        Color(0xFF2E86C1), // 蓝
+        Color(0xFF27AE60), // 绿
+      ]);
+    final rnd = math.Random(9);
+    for (var i = 0; i < 20; i++) {
+      c.spawn('A4', rnd: rnd);
+    }
+    final hues = c.words.map((w) => HSLColor.fromColor(w.color).hue.round()).toSet();
+    expect(hues.length, greaterThan(1), reason: '颜色应来自封面色板的多个色相');
+
+    // 白/近白（饱和度极低）不该占多数
+    final washed = c.words
+        .where((w) => HSLColor.fromColor(w.color).saturation < 0.15)
+        .length;
+    expect(washed, lessThan(c.words.length ~/ 2));
+  });
+
+  test('没有色板时退回白色兜底', () {
+    final c = make();
+    c.spawn('B3', rnd: math.Random(2));
+    expect(c.words.single.color.r, closeTo(1.0, 0.01));
+    expect(c.words.single.color.g, closeTo(1.0, 0.01));
+  });
 }

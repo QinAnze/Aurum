@@ -7,6 +7,10 @@
 ///
 /// 落点规则：只在下半屏的一条横带里撒（[bandTop]~[bottom]），按列切片随机取列，
 /// 列内随机取行，与已有字母做矩形避让；同一列排满就换列，全排满即清空。
+///
+/// 字号与颜色都是**每个字母独立随机**：
+///  - 字号：基准附近 ±45% 抖动（小字垫底、大字偶尔冒出来）
+///  - 颜色：从封面取色板里随机挑，再各自微调亮度
 library;
 
 import 'dart:math' as math;
@@ -49,8 +53,14 @@ class PitchScatterController {
   /// 一个字母占的最大宽度比例（切片列数由字号反推）
   static const int maxColumns = 14;
 
+  /// 字号抖动幅度：基准的 ±45%
+  static const double sizeJitter = 0.45;
+
   final math.Random _rng = math.Random();
   List<_Rect> _placed = [];
+
+  /// 当前取色板（来自封面采样）；空则退回白色
+  List<Color> _palette = const [];
 
   /// 满屏阈值：放这么多就清空重来（不写死像素，按屏幕能塞多少算）
   int _capacity = 60;
@@ -60,6 +70,22 @@ class PitchScatterController {
   Size get viewport => _size;
 
   bool get isEmpty => words.isEmpty;
+
+  /// 更新取色板（封面色变化时由外部每帧灌一次，不会重建已落位的字）
+  void setPalette(List<Color> colors) {
+    if (identical(colors, _palette)) return;
+    if (colors.length == _palette.length) {
+      var same = true;
+      for (var i = 0; i < colors.length; i++) {
+        if (colors[i] != _palette[i]) {
+          same = false;
+          break;
+        }
+      }
+      if (same) return;
+    }
+    _palette = List<Color>.unmodifiable(colors);
+  }
 
   /// 视口尺寸变化（或首帧）时调用：重算容量，避免换窗口后永远塞不满
   void layout(Size size) {
@@ -84,7 +110,9 @@ class PitchScatterController {
     if (size.isEmpty || note.isEmpty) return false;
     layout(size);
 
-    final fontSize = (size.width * 0.026).clamp(13.0, 34.0);
+    // 每个字的大小独立随机：基准 × [0.55, 1.45]
+    final base = (size.width * 0.030).clamp(14.0, 40.0);
+    final fontSize = base * (1 - sizeJitter + r.nextDouble() * sizeJitter * 2);
     final (tw, th) = measure(note, fontSize);
     if (tw <= 0 || th <= 0) return false;
 
@@ -111,7 +139,7 @@ class PitchScatterController {
             .clamp(top, math.max(top, bottom - th))
             .toDouble();
         if (_placed.any((p) => p.hits(x, y, tw, th))) continue;
-        _place(note, x, y, tw, th, fontSize);
+        _place(note, x, y, tw, th, fontSize, r);
         return true;
       }
     }
@@ -121,6 +149,15 @@ class PitchScatterController {
     return false;
   }
 
+  /// 从封面色板里挑一个：色板为空就白色，否则随机挑并在亮度上抖一点，
+  /// 免得一堆同色字糊成一片。
+  Color _pickColor(math.Random r) {
+    if (_palette.isEmpty) return Colors.white.withValues(alpha: 0.92);
+    final hsl = HSLColor.fromColor(_palette[r.nextInt(_palette.length)]);
+    final l = (hsl.lightness + 0.08 + r.nextDouble() * 0.24).clamp(0.55, 0.94);
+    return hsl.withLightness(l.toDouble()).toColor().withValues(alpha: 0.92);
+  }
+
   void _place(
     String note,
     double x,
@@ -128,24 +165,32 @@ class PitchScatterController {
     double tw,
     double th,
     double fontSize,
+    math.Random r,
   ) {
     if (words.length >= _capacity) {
       clear();
     }
-    words.add(ScatterWord(text: note, x: x, y: y, size: fontSize, color: Colors.white));
+    words.add(ScatterWord(
+      text: note,
+      x: x,
+      y: y,
+      size: fontSize,
+      color: _pickColor(r),
+    ));
     _placed.add(_Rect(x, y, tw, th));
   }
 
-  /// 按屏幕尺寸估一个容量（每个字母约占 (字号×2.2)² 的面积）
+  /// 按屏幕尺寸估一个容量（每个字母约占 (基准字号×2)² 的面积）
   static int computeCapacity(Size size) {
     if (size.isEmpty) return 60;
-    final fontSize = (size.width * 0.026).clamp(13.0, 34.0);
+    final fontSize = (size.width * 0.030).clamp(14.0, 40.0);
     final cell = fontSize * 2.0;
     final area = size.width * size.height * (1 - bandTop);
-    return (area / (cell * cell)).floor().clamp(12, 120);
+    return (area / (cell * cell)).floor().clamp(12, 160);
   }
 
-  /// 文本尺寸（用与绘制完全一致的 style，避免落位与实画错位）
+  /// 文本尺寸（用与绘制完全一致的 style，避免落位与实画错位）。
+  /// 字距与字宽跟着字号走，这里只用几何度量，颜色不影响结果。
   static (double, double) measure(String text, double fontSize) {
     final tp = TextPainter(
       text: TextSpan(text: text, style: styleFor(fontSize)),
@@ -155,14 +200,14 @@ class PitchScatterController {
     return (tp.width, tp.height);
   }
 
-  /// 纯字：只有白字 + 字距，**没有 shadows**（用户明确要求去掉发光）
-  static TextStyle styleFor(double fontSize) => TextStyle(
+  /// 纯字：**没有 shadows**（用户明确要求去掉发光）。颜色由每个字自己带。
+  static TextStyle styleFor(double fontSize, {Color? color}) => TextStyle(
         fontFamily: 'SmileySans',
         fontWeight: FontWeight.bold,
         fontSize: fontSize,
         height: 1.0,
         letterSpacing: -0.02 * fontSize,
-        color: Colors.white.withValues(alpha: 0.92),
+        color: color ?? Colors.white.withValues(alpha: 0.92),
       );
 }
 
@@ -185,7 +230,10 @@ class PitchScatter extends StatelessWidget {
               Positioned(
                 left: w.x,
                 top: w.y,
-                child: Text(w.text, style: PitchScatterController.styleFor(w.size)),
+                child: Text(
+                  w.text,
+                  style: PitchScatterController.styleFor(w.size, color: w.color),
+                ),
               ),
           ],
         ),

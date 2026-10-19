@@ -15,7 +15,8 @@
 ///  3. 人声/乐器各用各的窗口长度与稳定帧策略，不再用一套参数硬套两种场景。
 ///
 /// 两种场景的灵敏度是**分开调**的，不要合并：
-///  - 乐器（lead / pluck / solo）：够快、够松 → 0.1s 级的瞬态也要抓住
+///  - 乐器（lead / pluck / solo）：够快、够松 → 0.1s 级的瞬态也要抓住。
+///    这一档就是早期「太灵敏」那版的参数，用户明确说那个灵敏度正合适。
 ///  - 人声（歌词段）：更迟钝、更稳 → 只跟住真正唱稳的那个音
 library;
 
@@ -62,10 +63,10 @@ class PitchDetector {
     this.sampleRate = 44100,
     this.decimate = 1,
     this.rmsFloor = 0.004,
-    this.clarityMin = 0.44,
+    this.clarityMin = 0.40,
     this.stableFrames = 1,
     this.analysisSamples = 640,
-    this.yinThreshold = 0.17,
+    this.yinThreshold = 0.26,
     this.highPassHz = 220,
     this.lowPassHz = 0,
     this.takeHighest = true,

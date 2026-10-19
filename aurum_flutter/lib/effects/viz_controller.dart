@@ -30,6 +30,7 @@ class VizController extends ChangeNotifier implements TickerProvider {
     required this.lyrics,
     required this.cloudColorsFn,
     required this.cloud,
+    this.coverPaletteFn,
     this.fxCloud,
     this.fxSpectrum,
     this.fxKick,
@@ -44,6 +45,10 @@ class VizController extends ChangeNotifier implements TickerProvider {
   final List<LyricLine> Function() lyrics;
   final List<Color> Function() cloudColorsFn;
   final WordCloudController cloud;
+
+  /// 封面原始取色板（未提亮、未掺色）。音高散落字的颜色直接取自这里；
+  /// 不传则退回 [cloudColorsFn]。
+  final List<Color> Function()? coverPaletteFn;
 
   /// 逐特效开关（可选；未传则跟随总开关）。总开关关闭时一律不生效。
   ///  - [fxCloud]    背景词云
@@ -257,6 +262,12 @@ class VizController extends ChangeNotifier implements TickerProvider {
         if (pitch.update(wave, active: true) && pitch.revision != rev) {
           final note = pitch.note;
           if (note != null) {
+            // 颜色取自封面原始色板（不走 cloudColors：那套会掺固定粉彩 + 提亮，
+            // 撒出来的字就全变成差不多的白，看不出封面配色）。
+            final pal = coverPaletteFn?.call();
+            scatter.setPalette((pal != null && pal.isNotEmpty)
+                ? pal
+                : cloudColorsFn());
             if (scatter.viewport.isEmpty) scatter.layout(_canvasSize);
             final ok = scatter.spawn(note);
             // 满屏清空后立刻补上这一个：清空那一帧的字不该丢
