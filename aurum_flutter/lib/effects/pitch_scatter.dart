@@ -179,6 +179,12 @@ class PitchScatterController {
   /// 吸入延迟最多推迟多久（秒）
   static const double suckSpread = 0.16;
 
+  /// 铺满清屏时的吸入时长（比转场短：赶紧腾出背景）
+  static const double clearSuckSec = 0.38;
+
+  /// 铺满清屏时的延迟上限（秒）
+  static const double clearSuckSpread = 0.1;
+
   /// 竖排文本：逐字换行，升号 `#` 并到前一个音名后面（'C#4' → 'C#\n4'）
   static String verticalTextOf(String note) {
     final lines = <String>[];
@@ -203,6 +209,11 @@ class PitchScatterController {
   /// 吸入状态：已进行的时长（秒）；null = 没在吸
   double? _suckT;
   double _suckTotal = 0;
+
+  /// 本次吸入的单个字时长（秒）。铺满清屏用短的一套，
+  /// 相位转场用长的一套 —— 两者节奏不一样。延迟已按各自 spread 算进
+  /// 每个字的 suckDelay，这里只管"飞完要多久"。
+  double _suckSecCur = suckSec;
 
   /// 当前取色板（来自封面采样）；空则退回白色
   List<Color> _palette = const [];
@@ -245,6 +256,7 @@ class PitchScatterController {
   /// 清空（切歌 / 关特效 / 铺满）
   void clear() {
     _suckT = null;
+    _missStreak = 0;
     if (words.isEmpty) return;
     words.clear();
     _placed = [];
@@ -256,7 +268,11 @@ class PitchScatterController {
   ///
   /// 从散落切回中央时用：字先被卷进专辑中心，中央字母随后才出现，
   /// 两段视觉就接上了，不会「背景一空、字母凭空冒出来」。
-  void suckTo(Offset target) {
+  ///
+  /// [sec] / [spread] 可覆盖默认节奏：铺满清屏时用短的一套，
+  /// 好赶紧腾出背景放下一批字。
+  void suckTo(Offset target,
+      {double sec = suckSec, double spread = suckSpread}) {
     if (words.isEmpty) {
       _suckT = null;
       return;
@@ -271,13 +287,30 @@ class PitchScatterController {
     }
     for (final w in words) {
       final d = (Offset(w.centerX, w.centerY) - target).distance;
-      w.suckDelay = (d / maxD) * suckSpread;
+      w.suckDelay = (d / maxD) * spread;
       w.suck = null;
       w.suckAngle0 = w.pose.angle;
     }
+    _suckSecCur = sec;
     _suckT = 0;
-    _suckTotal = suckSpread + suckSec;
+    _suckTotal = spread + sec;
     _target = target;
+  }
+
+  /// 铺满清屏：不硬删，把整屏的字吸向一个**随机点**卷走（每次不一样），
+  /// 吸完才真的清空。比瞬间消失自然得多。
+  void suckAway() {
+    if (words.isEmpty) return;
+    if (_size.isEmpty) {
+      clear();
+      return;
+    }
+    // 落点在屏幕中段随机（避开边缘，别像往窗口外扔掉）
+    final t = Offset(
+      _size.width * (0.18 + _rng.nextDouble() * 0.64),
+      _size.height * (0.18 + _rng.nextDouble() * 0.64),
+    );
+    suckTo(t, sec: clearSuckSec, spread: clearSuckSpread);
   }
 
   Offset _target = Offset.zero;
@@ -382,7 +415,7 @@ class PitchScatterController {
 
   /// 吸入：从落位飞向封面中心，同时缩小、淡出、轻轻旋转。
   void _applySuck(ScatterWord w, double t) {
-    final local = ((t - w.suckDelay) / suckSec).clamp(0.0, 1.0);
+    final local = ((t - w.suckDelay) / _suckSecCur).clamp(0.0, 1.0);
     w.suck = local;
     if (local <= 0) return;
     // 加速被吸走：越靠近中心越快
@@ -423,27 +456,43 @@ class PitchScatterController {
     // 正在被吸走的时候不接受新字：否则会把吸入中的字一起清掉
     if (_suckT != null) return false;
     if (_isFull()) {
-      clear();
+      suckAway();
       return false;
     }
 
+    _overflowed = false;
     var tier = _pickTier(r);
     var ok = _tryPlace(note, tier, r);
     // 巨型字挤不进去时降一档再试：宁可这次小一点，也不要空着。
     if (!ok && tier == _Tier.giant) {
       ok = _tryPlace(note, _Tier.medium, r);
     }
-    if (ok) return true;
-    // 这一刻已经满了（放这个字会超）→ 清空重来
-    if (_isFull()) clear();
+    if (ok) {
+      _missStreak = 0;
+      return true;
+    }
+    // 放不下有三种：①再加就超面积/字数；②这一批塞不进缝了（连续多次
+    // 失败）；③只是这个字太大，缝里放不下。①②要吸走换一批，③保留背景。
+    // 只用 `_isFull()` 判会卡在死角：屏上还有零碎缝隙但随机落点撞不上，
+    // 既不铺新字也不换批，背景就僵在那里。
+    _missStreak++;
+    if (_overflowed || _missStreak >= 6 || _isFull()) suckAway();
     return false;
   }
+
+  /// 上一次 [_tryPlace] 是否因为「再加这个字就超面积/字数」而失败
+  bool _overflowed = false;
+
+  /// 连续几次 spawn 都塞不进缝。攒够了就当这一批铺满了 ——
+  /// 只按面积判会卡在死角：还有 5% 的零碎缝隙，但随机落点怎么都撞不上，
+  /// 于是既不铺新字也不换批，背景僵在那一屏。
+  int _missStreak = 0;
 
   /// 是否已经铺满：面积或字数到了上限
   bool _isFull() {
     if (_size.isEmpty) return false;
     if (words.length >= maxWords) return true;
-    return _coverage >= _size.width * _size.height * maxCoverage * 0.96;
+    return _coverage >= _size.width * _size.height * maxCoverage;
   }
 
   _Tier _pickTier(math.Random r) {
@@ -489,6 +538,7 @@ class PitchScatterController {
     // 铺满了就不再塞：清空重来
     final area = size.width * size.height;
     if (words.length >= maxWords || _coverage + tw * th > area * maxCoverage) {
+      _overflowed = true;
       return false;
     }
 

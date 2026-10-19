@@ -119,6 +119,16 @@ class VizController extends ChangeNotifier implements TickerProvider {
   Size _canvasSize = Size.zero;
   Rect? _coverRect;
 
+  /// 进入「无歌词 / 超长句 8s 后」相位的时刻（ticker 时钟）。
+  /// 用来算交接期：中心字母与背景词云先落下去，之后才允许铺背景散落。
+  double _instrumentAt = -1e9;
+
+  /// 交接期时长：中央字母坠落 380ms、词云 480ms，取 0.5s 两边都落完。
+  static const double _kHandoverSec = 0.5;
+
+  /// 交接时词云的坠落时长（ms）。正常换行是 1150ms，这里催快一点。
+  static const double _kCloudFallMs = 480;
+
   /// 由词云 widget 在布局时回填（画布即视口大小）
   void setCanvasSize(Size size) {
     _canvasSize = size;
@@ -270,15 +280,23 @@ class VizController extends ChangeNotifier implements TickerProvider {
           // 直接 clear 会让背景"啪"地空掉、字母凭空冒出来，两段接不上。
           scatter.suckTo(_suckTarget());
         } else if (phase == PitchPhase.instrument) {
-          // 中途又切回乐器段：放弃吸入，字留在原地别凭空消失
+          // 歌词段 → 无歌词段（含超长句唱过 8s）：中央字母和背景歌词先让位。
+          //  - 中央字母：pitchNote 变 null，PitchBadge 自己播 380ms 坠落
+          //  - 背景词云：让当前这句立刻错落坠落（480ms，比正常换行更快）
+          //  - 平铺：延后 [_kHandoverSec] 再开铺，绝不和上面两个同框
           scatter.cancelSuck();
+          _instrumentAt = _tsec;
+          cloud.dropCurrent(fallMs: _kCloudFallMs);
         } else {
           scatter.clear();
         }
       }
       // 散落的入场/吸走动画要逐帧推进（字落位之后本身是静态的）
       scatter.tick(dt);
-      if (phase == PitchPhase.instrument && playing && real) {
+      // 交接期：中心音高还在往下落（380ms），词云也在落（480ms），
+      // 这段时间不放新的平铺字，否则三个元素会糊在一起。
+      final settled = _tsec - _instrumentAt >= _kHandoverSec;
+      if (phase == PitchPhase.instrument && playing && real && settled) {
         final rev = pitch.revision;
         if (pitch.update(wave, active: true) && pitch.revision != rev) {
           final note = pitch.note;

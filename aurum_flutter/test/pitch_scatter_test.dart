@@ -64,14 +64,42 @@ void main() {
     final rnd = math.Random(11);
     var cleared = false;
     var prev = 0;
-    for (var i = 0; i < 600; i++) {
+    for (var i = 0; i < 900; i++) {
       c.spawn('C5', rnd: rnd);
+      // 铺满后不再硬清空，而是把字吸走 —— 要推进才会真的腾空
+      c.tick(0.05);
       if (c.words.length < prev) cleared = true;
       prev = c.words.length;
       expect(c.words.length, lessThanOrEqualTo(cap));
     }
-    expect(cleared, isTrue, reason: '铺满应清空重来');
+    expect(cleared, isTrue, reason: '铺满应吸走重来');
     expect(c.words, isNotEmpty);
+  });
+
+  test('铺满清屏是「吸走」而不是瞬间消失', () {
+    final c = make();
+    final rnd = math.Random(13);
+    // 一直放，直到铺满（塞不进缝会累加，够了就自动吸走）
+    for (var i = 0; i < 200; i++) {
+      c.spawn('A4', rnd: rnd);
+    }
+    expect(c.words, isNotEmpty, reason: '铺满那一刻字还在屏上');
+    expect(c.sucking, isTrue, reason: '应当进入吸入，而不是直接清空');
+
+    // 推进到一半：字还在、但已经在往目标点挪
+    for (var t = 0.0; t < 0.2; t += 0.016) {
+      c.tick(0.016);
+    }
+    expect(c.words, isNotEmpty);
+    final moved = c.words.any((w) => w.pose.dx != 0 || w.pose.dy != 0);
+    expect(moved, isTrue, reason: '应当看到字在飞');
+
+    // 吸完才清空
+    for (var t = 0.0; t < 0.8; t += 0.016) {
+      c.tick(0.016);
+    }
+    expect(c.isEmpty, isTrue);
+    expect(c.sucking, isFalse);
   });
 
   test('clear 清空；尺寸变化不影响正确性', () {
