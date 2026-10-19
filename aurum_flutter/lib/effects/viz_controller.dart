@@ -156,7 +156,7 @@ class VizController extends ChangeNotifier implements TickerProvider {
         // 中央字母再接上，否则两段会同时出现在同一帧，看着像打架。
         // 唱完静 0.6s 也让字母落下去（>8s 段落前先收，段开始再升上来）。
         PitchPhase.vocal =>
-          (scatter.sucking || window.silence > 0.6) ? null : vocal.note,
+          (scatter.exiting || window.silence > 0.6) ? null : vocal.note,
         PitchPhase.instrument => null,
         PitchPhase.off => null,
       };
@@ -284,7 +284,7 @@ class VizController extends ChangeNotifier implements TickerProvider {
           //  - 中央字母：pitchNote 变 null，PitchBadge 自己播 380ms 坠落
           //  - 背景词云：让当前这句立刻错落坠落（480ms，比正常换行更快）
           //  - 平铺：延后 [_kHandoverSec] 再开铺，绝不和上面两个同框
-          scatter.cancelSuck();
+          scatter.cancelExit();
           _instrumentAt = _tsec;
           cloud.dropCurrent(fallMs: _kCloudFallMs);
         } else {

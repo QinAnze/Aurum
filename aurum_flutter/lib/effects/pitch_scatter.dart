@@ -108,6 +108,13 @@ class ScatterWord {
   /// 被吸入的延迟（秒）：离中心越远越晚起步，形成"被卷走"的层次
   double suckDelay = 0;
 
+  /// 下落的延迟（秒）：随机错落，别让整屏字齐刷刷一起掉
+  double fallDelay = 0;
+
+  /// 下落的旋转量（弧度，带方向）与起始角度
+  double fallSpin = 0;
+  double fallAngle0 = 0;
+
   /// 吸入开始时的角度。吸入过程中角度要在它基础上叠加，
   /// 直接用 pose.angle 会每帧累加、字越吸越歪。
   double suckAngle0 = 0;
@@ -140,6 +147,11 @@ class _Rect {
 
 /// 落位难度：巨型字要试更多次才找得到空位
 enum _Tier { small, medium, giant }
+
+/// 整屏退场的方式。两种视觉完全不同，不要混用：
+///  - [suck] 吸向封面中心（散落 → 中央字母的转场）
+///  - [fall] 向下坠落（这一批铺满了，换一批）
+enum _Exit { none, suck, fall }
 
 /// 纯数据控制器：由 [VizController] 逐帧驱动，widget 只负责画。
 class PitchScatterController {
@@ -179,11 +191,11 @@ class PitchScatterController {
   /// 吸入延迟最多推迟多久（秒）
   static const double suckSpread = 0.16;
 
-  /// 铺满清屏时的吸入时长（比转场短：赶紧腾出背景）
-  static const double clearSuckSec = 0.38;
+  /// 铺满清屏时单个字的下落时长（秒）
+  static const double fallSec = 0.52;
 
-  /// 铺满清屏时的延迟上限（秒）
-  static const double clearSuckSpread = 0.1;
+  /// 铺满清屏时下落出发的错落范围（秒）
+  static const double fallSpread = 0.14;
 
   /// 竖排文本：逐字换行，升号 `#` 并到前一个音名后面（'C#4' → 'C#\n4'）
   static String verticalTextOf(String note) {
@@ -206,14 +218,17 @@ class PitchScatterController {
   /// 巨型字只占 8% 概率，一轮铺满可能一个都没抽到，背景就平了。
   int _sinceClear = 0;
 
-  /// 吸入状态：已进行的时长（秒）；null = 没在吸
-  double? _suckT;
-  double _suckTotal = 0;
+  /// 退场状态：方式 + 已进行的时长（秒）
+  _Exit _exit = _Exit.none;
+  double _exitT = 0;
+  double _exitTotal = 0;
 
-  /// 本次吸入的单个字时长（秒）。铺满清屏用短的一套，
-  /// 相位转场用长的一套 —— 两者节奏不一样。延迟已按各自 spread 算进
-  /// 每个字的 suckDelay，这里只管"飞完要多久"。
+  /// 本次吸入的单个字时长（秒）。延迟已按 spread 算进每个字的 suckDelay，
+  /// 这里只管"飞完要多久"。
   double _suckSecCur = suckSec;
+
+  /// 本次下落的单个字时长（秒）
+  double _fallSecCur = fallSec;
 
   /// 当前取色板（来自封面采样）；空则退回白色
   List<Color> _palette = const [];
@@ -225,8 +240,11 @@ class PitchScatterController {
 
   bool get isEmpty => words.isEmpty;
 
-  /// 是否正在把字吸向中心
-  bool get sucking => _suckT != null;
+  /// 是否正在把字吸向中心（转场专用）
+  bool get sucking => _exit == _Exit.suck;
+
+  /// 是否正在整屏退场（吸走或下落）
+  bool get exiting => _exit != _Exit.none;
 
   /// 是否还有字在屏上（含正在被吸的）
   bool get busy => words.isNotEmpty;
@@ -255,7 +273,8 @@ class PitchScatterController {
 
   /// 清空（切歌 / 关特效 / 铺满）
   void clear() {
-    _suckT = null;
+    _exit = _Exit.none;
+    _exitT = 0;
     _missStreak = 0;
     if (words.isEmpty) return;
     words.clear();
@@ -274,7 +293,7 @@ class PitchScatterController {
   void suckTo(Offset target,
       {double sec = suckSec, double spread = suckSpread}) {
     if (words.isEmpty) {
-      _suckT = null;
+      _exit = _Exit.none;
       return;
     }
     // 离中心最远的距离，用来算各自延迟
@@ -292,25 +311,35 @@ class PitchScatterController {
       w.suckAngle0 = w.pose.angle;
     }
     _suckSecCur = sec;
-    _suckT = 0;
-    _suckTotal = spread + sec;
+    _exit = _Exit.suck;
+    _exitT = 0;
+    _exitTotal = spread + sec;
     _target = target;
   }
 
-  /// 铺满清屏：不硬删，把整屏的字吸向一个**随机点**卷走（每次不一样），
-  /// 吸完才真的清空。比瞬间消失自然得多。
-  void suckAway() {
+  /// 铺满清屏：不硬删，整屏的字**向下坠落**（错落出发、自由落体加速、
+  /// 边掉边淡出、各自带一点旋转），落完才真的清空。
+  ///
+  /// 这里刻意不用吸入 —— 吸入是「散落 → 中央字母」的转场语言，
+  /// 铺满换批用同一套动作会让人以为又要出中央字母了。
+  void fallAway() {
     if (words.isEmpty) return;
     if (_size.isEmpty) {
       clear();
       return;
     }
-    // 落点在屏幕中段随机（避开边缘，别像往窗口外扔掉）
-    final t = Offset(
-      _size.width * (0.18 + _rng.nextDouble() * 0.64),
-      _size.height * (0.18 + _rng.nextDouble() * 0.64),
-    );
-    suckTo(t, sec: clearSuckSec, spread: clearSuckSpread);
+    for (final w in words) {
+      w.fallDelay = _rng.nextDouble() * fallSpread;
+      // 旋转方向与幅度随机，整屏才不会像一块板子齐刷刷倒下去
+      w.fallSpin =
+          (_rng.nextBool() ? 1 : -1) * (0.16 + _rng.nextDouble() * 0.42);
+      w.fallAngle0 = w.pose.angle;
+      w.suck = null;
+    }
+    _fallSecCur = fallSec;
+    _exit = _Exit.fall;
+    _exitT = 0;
+    _exitTotal = fallSpread + fallSec;
   }
 
   Offset _target = Offset.zero;
@@ -321,24 +350,28 @@ class PitchScatterController {
   /// 所以这里只在必要时改 pose；[dt] 为 0 时什么也不做。
   void tick(double dt) {
     if (words.isEmpty || dt <= 0) return;
-    final t = _suckT;
-    if (t != null) {
-      _suckT = t + dt;
-      if (_suckT! >= _suckTotal) {
+    if (_exit != _Exit.none) {
+      _exitT += dt;
+      if (_exitT >= _exitTotal) {
         clear();
         return;
       }
     }
     for (final w in words) {
       _applyEntrance(w, dt);
-      if (t != null) _applySuck(w, _suckT!);
+      if (_exit == _Exit.suck) {
+        _applySuck(w, _exitT);
+      } else if (_exit == _Exit.fall) {
+        _applyFall(w, _exitT);
+      }
     }
   }
 
-  /// 停掉吸入（中途切回乐器段时用）：字留在原地，恢复到静止姿态
-  void cancelSuck() {
-    if (_suckT == null) return;
-    _suckT = null;
+  /// 停掉退场（中途切回乐器段时用）：字留在原地，恢复到静止姿态
+  void cancelExit() {
+    if (_exit == _Exit.none) return;
+    _exit = _Exit.none;
+    _exitT = 0;
     for (final w in words) {
       w.suck = null;
       w.pose
@@ -429,6 +462,22 @@ class PitchScatterController {
       ..alpha = 1 - e;
   }
 
+  /// 下落：自由落体加速掉到屏幕外，边掉边淡出、各自旋转。
+  ///
+  /// 位移量按每个字自己的 y 算，保证 e=1 时整块字都在视口下方之外
+  /// （竖排的高字与巨型字都要照顾到，不能统一用画布高度）。
+  void _applyFall(ScatterWord w, double t) {
+    final local = ((t - w.fallDelay) / _fallSecCur).clamp(0.0, 1.0);
+    if (local <= 0) return;
+    final e = local * local; // ease-in quad = 自由落体
+    final travel = (_size.height + w.height + 48) - w.y;
+    w.pose
+      ..dx = e * w.fallSpin * 26
+      ..dy = e * travel
+      ..angle = w.fallAngle0 + e * w.fallSpin
+      ..alpha = 1 - e * e;
+  }
+
   static double _easeOutCubic(double t) {
     final u = 1 - t;
     return 1 - u * u * u;
@@ -454,9 +503,9 @@ class PitchScatterController {
     if (size.isEmpty || note.isEmpty) return false;
     layout(size);
     // 正在被吸走的时候不接受新字：否则会把吸入中的字一起清掉
-    if (_suckT != null) return false;
+    if (exiting) return false;
     if (_isFull()) {
-      suckAway();
+      fallAway();
       return false;
     }
 
@@ -476,7 +525,7 @@ class PitchScatterController {
     // 只用 `_isFull()` 判会卡在死角：屏上还有零碎缝隙但随机落点撞不上，
     // 既不铺新字也不换批，背景就僵在那里。
     _missStreak++;
-    if (_overflowed || _missStreak >= 6 || _isFull()) suckAway();
+    if (_overflowed || _missStreak >= 6 || _isFull()) fallAway();
     return false;
   }
 

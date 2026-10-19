@@ -76,30 +76,32 @@ void main() {
     expect(c.words, isNotEmpty);
   });
 
-  test('铺满清屏是「吸走」而不是瞬间消失', () {
+  test('铺满清屏是「向下坠落」而不是瞬间消失', () {
     final c = make();
     final rnd = math.Random(13);
-    // 一直放，直到铺满（塞不进缝会累加，够了就自动吸走）
+    // 一直放，直到铺满（塞不进缝会累加，够了就自动换批）
     for (var i = 0; i < 200; i++) {
       c.spawn('A4', rnd: rnd);
     }
     expect(c.words, isNotEmpty, reason: '铺满那一刻字还在屏上');
-    expect(c.sucking, isTrue, reason: '应当进入吸入，而不是直接清空');
+    expect(c.exiting, isTrue, reason: '应当进入退场，而不是直接清空');
+    expect(c.sucking, isFalse, reason: '铺满换批不该用吸入（那是转场语言）');
 
-    // 推进到一半：字还在、但已经在往目标点挪
-    for (var t = 0.0; t < 0.2; t += 0.016) {
+    // 推进一小段：字往下掉、并且变小变淡
+    for (var t = 0.0; t < 0.22; t += 0.016) {
       c.tick(0.016);
     }
     expect(c.words, isNotEmpty);
-    final moved = c.words.any((w) => w.pose.dx != 0 || w.pose.dy != 0);
-    expect(moved, isTrue, reason: '应当看到字在飞');
+    final falling = c.words.where((w) => w.pose.dy > 0);
+    expect(falling, isNotEmpty, reason: '应当看到字在往下掉');
+    expect(c.words.any((w) => w.pose.alpha < 1), isTrue, reason: '下落要淡出');
 
-    // 吸完才清空
-    for (var t = 0.0; t < 0.8; t += 0.016) {
+    // 落完才清空
+    for (var t = 0.0; t < 0.9; t += 0.016) {
       c.tick(0.016);
     }
     expect(c.isEmpty, isTrue);
-    expect(c.sucking, isFalse);
+    expect(c.exiting, isFalse);
   });
 
   test('clear 清空；尺寸变化不影响正确性', () {
@@ -263,7 +265,7 @@ void main() {
     expect(c.sucking, isFalse);
   });
 
-  test('吸入期间不接受新字；cancelSuck 能把字留在原地', () {
+  test('退场期间不接受新字；cancelExit 能把字留在原地', () {
     final c = make();
     for (var i = 0; i < 10; i++) {
       c.spawn('D4', rnd: math.Random(i));
@@ -272,7 +274,7 @@ void main() {
     expect(c.spawn('E5', rnd: math.Random(1)), isFalse,
         reason: '正在吸走时不能让新字把这一屏清掉');
 
-    c.cancelSuck();
+    c.cancelExit();
     expect(c.sucking, isFalse);
     expect(c.words, isNotEmpty, reason: '取消吸入不应把字弄没');
     for (final w in c.words) {
