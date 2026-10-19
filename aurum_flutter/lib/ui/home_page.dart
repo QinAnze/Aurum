@@ -152,6 +152,9 @@ class _HomePageState extends State<HomePage> {
                     flip: app.bgFlip,
                   ),
                 ),
+                // 音高散落（乐器段）：铺在**背景层之上**、UI 之下 ——
+                // 用户要的是「铺在背景上」，不是浮在面板前面的顶层贴纸。
+                if (app.fxItemOn('pitch')) _pitchScatter(),
                 // 全屏词云（垫在 UI 之下、背景层之上）
                 _wordCloudLayer(),
                 // 应用主体
@@ -177,11 +180,8 @@ class _HomePageState extends State<HomePage> {
                 ],
                 // kick 打光：整窗四周的光圈（在面板之上、抽屉/Toast 之下）
                 if (app.fxItemOn('kick')) _edgeLight(),
-                // 音高：人声段是封面中央的字母，乐器段是底部散落
-                if (app.fxItemOn('pitch')) ...[
-                  _pitchScatter(),
-                  _pitchBadge(),
-                ],
+                // 音高：人声段是封面中央的字母（顶层），乐器段散落已在背景层
+                if (app.fxItemOn('pitch')) _pitchBadge(),
                 // Toast
                 Toast(message: app.toastMsg, visible: app.toastVisible),
               ],

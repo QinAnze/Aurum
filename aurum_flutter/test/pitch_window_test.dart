@@ -106,4 +106,41 @@ void main() {
     w.reset();
     expect(w.phase, PitchPhase.off);
   });
+
+  /* ---------------- 超长句：句内 >8s 转散落 ---------------- */
+
+  test('超长句：前 8s 仍是人声，之后转乐器（即使一直测到音）', () {
+    final w = PitchWindow();
+    // 一句唱 14s，下一句在 14s：人声全程都在，但本句自己超过 8s
+    final lines = _lines([0, 14]);
+    expect(_run(w, lines, from: 0, to: 7.8, heardUntil: 999),
+        PitchPhase.vocal);
+    expect(_run(w, lines, from: 7.8, to: 8.4, heardUntil: 999),
+        PitchPhase.instrument);
+  });
+
+  test('超长句：切到乐器后一直保持到本句结束，不是闪一下就回去', () {
+    final w = PitchWindow();
+    final lines = _lines([0, 14]);
+    _run(w, lines, from: 0, to: 8.4, heardUntil: 999);
+    expect(_run(w, lines, from: 8.4, to: 13.6, heardUntil: 999),
+        PitchPhase.instrument);
+  });
+
+  test('超长句：下一句开始时回到人声', () {
+    final w = PitchWindow();
+    final lines = _lines([0, 14, 28]);
+    _run(w, lines, from: 0, to: 13.6, heardUntil: 999);
+    expect(w.phase, PitchPhase.instrument);
+    expect(_run(w, lines, from: 13.6, to: 14.4, heardUntil: 999),
+        PitchPhase.vocal);
+  });
+
+  test('普通句（<8s）不会因为句内就走满 8s 而切走', () {
+    final w = PitchWindow();
+    // 句长 6s：全程人声
+    final lines = _lines([0, 6, 12]);
+    expect(_run(w, lines, from: 0, to: 5.9, heardUntil: 999),
+        PitchPhase.vocal);
+  });
 }

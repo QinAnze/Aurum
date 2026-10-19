@@ -4,8 +4,10 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:aurum/audio/player_engine.dart';
+import 'package:aurum/effects/pitch_scatter.dart';
 import 'package:aurum/main.dart';
 import 'package:aurum/state/app_state.dart';
+import 'package:aurum/widgets/glass.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -54,6 +56,31 @@ class _StubEngine implements PlayerEngine {
 
   @override
   void dispose() {}
+}
+
+/// 返回 [finder] 命中的元素所在 Stack 的 children 下标，找不到返回 -1。
+int _stackIndexOf(WidgetTester tester, Finder finder) {
+  if (finder.evaluate().isEmpty) return -1;
+  final node = finder.evaluate().first;
+  Element? direct = node;
+  int? index;
+  node.visitAncestorElements((up) {
+    if (up.widget is Stack) {
+      final stack = up.widget as Stack;
+      var i = 0;
+      for (final child in stack.children) {
+        if (identical(child, direct!.widget)) {
+          index = i;
+          return false;
+        }
+        i++;
+      }
+      return false;
+    }
+    direct = up;
+    return true;
+  });
+  return index ?? -1;
 }
 
 void main() {
@@ -122,6 +149,25 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('fx-check-cloud')));
     await tester.pump();
     expect(app.fxOn, isTrue);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    app.dispose();
+  });
+
+  testWidgets('音高散落铺在背景层，不压住播放器面板', (tester) async {
+    final app = AppState(engine: _StubEngine(), autoStart: false);
+    await tester.pumpWidget(AurumApp(app: app));
+    await tester.runAsync(
+        () async => await Future.delayed(const Duration(milliseconds: 500)));
+    await tester.pump();
+
+    // 音高散落与播放器面板的同层顺序：散落必须在面板**之前**（更靠下）
+    final panelIdx = _stackIndexOf(tester, find.byType(GlassPanel).first);
+    final scatterIdx = _stackIndexOf(tester, find.byType(PitchScatter));
+    expect(scatterIdx, isNonNegative, reason: '音高特效开着时散落层应存在');
+    expect(scatterIdx, lessThan(panelIdx),
+        reason: '散落是背景层，必须在播放器面板之下');
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
