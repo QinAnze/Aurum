@@ -190,7 +190,7 @@ class _CoverArtState extends State<CoverArt>
                 clipBehavior: Clip.none, // 环画布 1.6×封面，不能裁
                 children: [
                   _halo(size),
-                  if (widget.viz.fxOn()) _ring(size),
+                  if (widget.viz.spectrumEnabled()) _ring(size),
                   _coverStack(size),
                 ],
               ),
@@ -256,7 +256,7 @@ class _CoverArtState extends State<CoverArt>
             painter: SpectrumRingPainter(
               vals: widget.viz.specVals,
               climax: widget.viz.climax,
-              oc: widget.viz.fxOn(),
+              oc: widget.viz.spectrumEnabled(),
               coverWidth: size,
             ),
           ),

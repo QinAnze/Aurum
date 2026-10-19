@@ -90,6 +90,16 @@ class AppState extends ChangeNotifier {
   /* ---------------- 视觉特效总开关（词云/频谱/超频 合一） ---------------- */
   bool fxOn = true;
 
+  /* ---------------- 逐特效开关（总开关之下各自独立） ---------------- */
+  /// 背景词云
+  bool fxCloud = true;
+  /// 封面频谱环
+  bool fxSpectrum = true;
+  /// 四周打光（kick）
+  bool fxKick = true;
+  /// 音高字母（人声段居中 / 乐器段底部散落）
+  bool fxPitch = true;
+
   /* ---------------- 主题色（封面取色） ---------------- */
   Color c1 = const Color(0xFFC9A06A); // 默认：香槟金
   Color c2 = const Color(0xFF7FA693); // 默认：灰绿
@@ -462,6 +472,34 @@ class AppState extends ChangeNotifier {
     toast(fxOn ? '视觉特效全开喵～都给我燃起来' : '特效关了，安分守己喵');
     _notify();
   }
+
+  /// 逐特效开关：总开关关着的时候拨动它，顺手把总开关打开
+  /// （否则点了没反应，像是坏了）
+  void toggleFxItem(String key) {
+    switch (key) {
+      case 'cloud':
+        fxCloud = !fxCloud;
+      case 'spectrum':
+        fxSpectrum = !fxSpectrum;
+      case 'kick':
+        fxKick = !fxKick;
+      case 'pitch':
+        fxPitch = !fxPitch;
+      default:
+        return;
+    }
+    if (!fxOn) fxOn = true;
+    _notify();
+  }
+
+  /// 某个特效此刻是否真的在跑（总开关 && 自身开关）
+  bool fxItemOn(String key) => fxOn && switch (key) {
+        'cloud' => fxCloud,
+        'spectrum' => fxSpectrum,
+        'kick' => fxKick,
+        'pitch' => fxPitch,
+        _ => false,
+      };
 
   /* ---------------- 歌词装载（原版 setLyrics：解析 + 预分词 + skip 标记） ---------------- */
   void setLyrics(String? lrc) {

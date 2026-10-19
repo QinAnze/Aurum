@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 
 import '../effects/edge_light.dart';
 import '../effects/pitch_badge.dart';
+import '../effects/pitch_scatter.dart';
 import '../effects/viz_controller.dart';
 import '../effects/word_cloud.dart';
 import '../state/app_state.dart';
@@ -16,6 +17,7 @@ import '../theme/tokens.dart';
 import '../widgets/bg_layers.dart';
 import '../widgets/controls.dart';
 import '../widgets/cover.dart';
+import '../widgets/fx_checklist.dart';
 import '../widgets/glass.dart';
 import '../widgets/glow_text.dart';
 import '../widgets/master_toggle.dart';
@@ -38,7 +40,8 @@ class _HomePageState extends State<HomePage> {
   late final VizController _viz;
   late final FocusNode _rootFocus;
   int _lastLyricsRev = -1;
-  bool _lastFxOn = true;
+  bool _lastCloudOn = true;
+  bool _lastPitchOn = true;
   bool _drawerOpen = false;
   int _volAnimToken = 0;
 
@@ -52,24 +55,38 @@ class _HomePageState extends State<HomePage> {
       isPlaying: () => widget.app.playing,
       volume: () => widget.app.volume,
       fxOn: () => widget.app.fxOn,
+      fxCloud: () => widget.app.fxCloud,
+      fxSpectrum: () => widget.app.fxSpectrum,
+      fxKick: () => widget.app.fxKick,
+      fxPitch: () => widget.app.fxPitch,
       lyrics: () => widget.app.lyrics,
       cloudColorsFn: () => cloudColors(widget.app.palette ?? const []),
       cloud: _cloud,
     );
     widget.app.addListener(_onApp);
-    _lastFxOn = widget.app.fxOn;
+    _lastCloudOn = widget.app.fxItemOn('cloud');
+    _lastPitchOn = widget.app.fxItemOn('pitch');
     _onApp();
   }
 
   void _onApp() {
-    if (widget.app.playing || widget.app.fxOn) _viz.start();
-    if (widget.app.lyricsRev != _lastLyricsRev) {
-      _lastLyricsRev = widget.app.lyricsRev;
+    final a = widget.app;
+    if (a.playing || a.fxItemOn('cloud') || a.fxItemOn('spectrum')) _viz.start();
+    if (a.lyricsRev != _lastLyricsRev) {
+      _lastLyricsRev = a.lyricsRev;
       _viz.resetCloud();
     }
-    if (widget.app.fxOn != _lastFxOn) {
-      _lastFxOn = widget.app.fxOn;
-      if (!_lastFxOn) _viz.resetCloud(); // 关特效即清词云
+    // 词云单独关掉时也要清场，不然旧词会冻在屏上
+    final cloudNow = a.fxItemOn('cloud');
+    if (cloudNow != _lastCloudOn) {
+      _lastCloudOn = cloudNow;
+      if (!cloudNow) _viz.resetCloud();
+    }
+    // 音高关掉时散落字同样要清空
+    final pitchNow = a.fxItemOn('pitch');
+    if (pitchNow != _lastPitchOn) {
+      _lastPitchOn = pitchNow;
+      if (!pitchNow) _viz.scatter.clear();
     }
   }
 
@@ -158,9 +175,12 @@ class _HomePageState extends State<HomePage> {
                   _drawer(),
                 ],
                 // kick 打光：整窗四周的光圈（在面板之上、抽屉/Toast 之下）
-                if (app.fxOn) _edgeLight(),
-                // 音高字母：顶层，蹦在封面正中
-                if (app.fxOn) _pitchBadge(),
+                if (app.fxItemOn('kick')) _edgeLight(),
+                // 音高：人声段是封面中央的字母，乐器段是底部散落
+                if (app.fxItemOn('pitch')) ...[
+                  _pitchScatter(),
+                  _pitchBadge(),
+                ],
                 // Toast
                 Toast(message: app.toastMsg, visible: app.toastVisible),
               ],
@@ -181,7 +201,9 @@ class _HomePageState extends State<HomePage> {
             child: AnimatedBuilder(
               animation: _viz,
               builder: (_, __) {
-                if (!widget.app.fxOn) return const SizedBox.shrink();
+                if (!widget.app.fxItemOn('cloud')) {
+                  return const SizedBox.shrink();
+                }
                 return Transform.translate(
                   offset: Offset(_viz.cloudJx, _viz.cloudJy),
                   child: Transform.scale(
@@ -221,7 +243,17 @@ class _HomePageState extends State<HomePage> {
   }
 
   /* ---------------- 音高字母层 ---------------- */
-  /// 长间隙里检测到的最高音（E5），顶层覆盖在封面中央
+  /// 乐器段：底部随机散落的音高字（无动画、无发光）
+  Widget _pitchScatter() {
+    return Positioned.fill(
+      child: AnimatedBuilder(
+        animation: _viz,
+        builder: (_, __) => PitchScatter(controller: _viz.scatter),
+      ),
+    );
+  }
+
+  /// 人声段：检测到的音（E5），顶层覆盖在封面中央
   Widget _pitchBadge() {
     return Positioned.fill(
       child: AnimatedBuilder(
@@ -344,11 +376,31 @@ class _HomePageState extends State<HomePage> {
             child: _npInfo(),
           ),
         ),
-        MasterToggle(
-          on: app.fxOn,
-          c1: app.c1,
-          c2: app.c2,
-          onChanged: (_) => app.toggleFx(),
+        // 总开关 + 逐特效打勾框（框一律排在这个开关**下面**）
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            MasterToggle(
+              on: app.fxOn,
+              c1: app.c1,
+              c2: app.c2,
+              onChanged: (_) => app.toggleFx(),
+            ),
+            const SizedBox(height: 7),
+            FxChecklist(
+              masterOn: app.fxOn,
+              c1: app.c1,
+              c2: app.c2,
+              onToggle: app.toggleFxItem,
+              items: [
+                FxItem(key: 'cloud', label: '词云', value: app.fxCloud),
+                FxItem(key: 'spectrum', label: '频谱', value: app.fxSpectrum),
+                FxItem(key: 'kick', label: '打光', value: app.fxKick),
+                FxItem(key: 'pitch', label: '音高', value: app.fxPitch),
+              ],
+            ),
+          ],
         ),
       ],
     );

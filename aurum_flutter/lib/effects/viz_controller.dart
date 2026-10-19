@@ -17,6 +17,7 @@ import '../../audio/player_engine.dart';
 import '../../models.dart';
 import 'kick_detector.dart';
 import 'pitch_detector.dart';
+import 'pitch_scatter.dart';
 import 'spectrum_ring.dart' show kSpecN;
 import 'word_cloud.dart';
 
@@ -29,16 +30,39 @@ class VizController extends ChangeNotifier implements TickerProvider {
     required this.lyrics,
     required this.cloudColorsFn,
     required this.cloud,
+    this.fxCloud,
+    this.fxSpectrum,
+    this.fxKick,
+    this.fxPitch,
   });
 
   final PlayerEngine engine;
   final bool Function() isPlaying;
   final double Function() volume;
-  /// 视觉特效总开关（词云/频谱/超频 合一，对应原版 masterToggle）
+  /// 视觉特效总开关（masterToggle）：关掉时所有特效一起停
   final bool Function() fxOn;
   final List<LyricLine> Function() lyrics;
   final List<Color> Function() cloudColorsFn;
   final WordCloudController cloud;
+
+  /// 逐特效开关（可选；未传则跟随总开关）。总开关关闭时一律不生效。
+  ///  - [fxCloud]    背景词云
+  ///  - [fxSpectrum] 封面频谱环
+  ///  - [fxKick]     四周打光
+  ///  - [fxPitch]    音高字母（人声中央字母 + 乐器段底部散落）
+  final bool Function()? fxCloud;
+  final bool Function()? fxSpectrum;
+  final bool Function()? fxKick;
+  final bool Function()? fxPitch;
+
+  /// 词云是否该跑
+  bool cloudEnabled() => fxOn() && (fxCloud?.call() ?? true);
+  /// 频谱是否该取数/绘制
+  bool spectrumEnabled() => fxOn() && (fxSpectrum?.call() ?? true);
+  /// 打光是否该跑
+  bool kickEnabled() => fxOn() && (fxKick?.call() ?? true);
+  /// 音高检测 + 字母是否该跑
+  bool pitchEnabled() => fxOn() && (fxPitch?.call() ?? true);
 
   /* ---------------- 对外暴露的逐帧状态 ---------------- */
   double climax = 0;
@@ -55,6 +79,10 @@ class VizController extends ChangeNotifier implements TickerProvider {
 
   /// 逐帧决定跑人声还是乐器（歌词段 → 人声；>8s 的纯乐器段 → 乐器）
   final PitchWindow window = PitchWindow();
+
+  /// 乐器段的散落字母（底部随机落位、无动画、无光晕）。
+  /// 人声段不用它：那一段还是封面中央的 [PitchBadge]。
+  final PitchScatterController scatter = PitchScatterController();
 
   /// 无歌词曲目 / 前奏：持续响度最大段（drop）跟踪
   final LoudSectionTracker loud = LoudSectionTracker();
@@ -87,7 +115,10 @@ class VizController extends ChangeNotifier implements TickerProvider {
   Rect? _coverRect;
 
   /// 由词云 widget 在布局时回填（画布即视口大小）
-  void setCanvasSize(Size size) => _canvasSize = size;
+  void setCanvasSize(Size size) {
+    _canvasSize = size;
+    scatter.layout(size);
+  }
 
   /// 由封面 widget 回填其全局矩形（词云封面圆禁区）
   void setCoverRect(Rect? rect) => _coverRect = rect;
@@ -95,11 +126,12 @@ class VizController extends ChangeNotifier implements TickerProvider {
   /// 封面全局矩形（音高字母落点）
   Rect? get coverRect => _coverRect;
 
-  /// 当前该显示的音名：人声段是人声音高，乐器段是乐器最高音
+  /// 当前该显示的音名：**只在人声段**有值（封面中央那个字母）。
+  /// 乐器段改走底部散落（[scatter]），这里返回 null，两者不会同时出现。
   String? get pitchNote => switch (window.phase) {
         // 唱完静 0.6s 就让字母落下去（>8s 段落前先收，段开始再升上来）
         PitchPhase.vocal => window.silence > 0.6 ? null : vocal.note,
-        PitchPhase.instrument => pitch.note,
+        PitchPhase.instrument => null,
         PitchPhase.off => null,
       };
 
@@ -141,10 +173,11 @@ class VizController extends ChangeNotifier implements TickerProvider {
 
   bool _shouldRun() {
     if (isPlaying() || engine.isPlaying) return true;
-    if (fxOn()) return true; // 频谱/词云开着就持续渲染
+    if (cloudEnabled() || spectrumEnabled()) return true; // 词云/频谱开着就持续渲染
     if (climax >= 0.02) return true; // 高潮余韵
     if (kick.env >= 0.01) return true; // 打光余晖还要淡出
     if (cloud.hasActive) return true; // 词还在坠落
+    if (!scatter.isEmpty) return true; // 散落字母还要留在屏上
     return false;
   }
 
@@ -159,6 +192,7 @@ class VizController extends ChangeNotifier implements TickerProvider {
     final playing = isPlaying() || engine.isPlaying;
     final vol = volume();
     final oc = fxOn();
+    final pc = oc && pitchEnabled();
     final tsec = _tsec;
 
     // 真实频谱数据；无信号则回退 BPM 模拟。
@@ -178,9 +212,9 @@ class VizController extends ChangeNotifier implements TickerProvider {
     /* ---- 底鼓检测：只在播放 + 特效开关打开时判，否则让包络自然回落 ----
        数据源用 wave（时域、线性幅度）：fft 是 dB 归一化 0..1，低频段
        长期饱和在 1.0，判不了冲击（详见 kick_detector 顶部注释）。 */
-    kick.update(real ? wave : null, dt, active: oc && playing && real);
+    kick.update(real ? wave : null, dt, active: kickEnabled() && playing && real);
 
-    /* ---- 音高：歌词段测人声，>8s 的纯乐器段测乐器最高音 ---- */
+    /* ---- 音高：歌词段测人声（中央字母），>8s 的纯乐器段测乐器（底部散落）---- */
     final pos = engine.positionSec;
     if (pos < _lastPos - 1.0) {
       // 切歌 / 回跳：响度统计与已锁定的音全部重来
@@ -188,10 +222,11 @@ class VizController extends ChangeNotifier implements TickerProvider {
       pitch.reset();
       vocal.reset();
       window.reset();
+      scatter.clear();
     }
     _lastPos = pos;
 
-    if (oc) {
+    if (pc) {
       final lines = lyrics();
       if (playing) loud.update(_waveRms(wave), dt);
 
@@ -214,15 +249,30 @@ class VizController extends ChangeNotifier implements TickerProvider {
         // 换相位就清空对应检测器：新窗口从零开始取音
         if (phase == PitchPhase.vocal) vocal.reset();
         if (phase == PitchPhase.instrument) pitch.reset();
+        // 进入人声段 / 离开乐器段：散落字立刻清空，交给中央字母
+        if (phase != PitchPhase.instrument) scatter.clear();
       }
       if (phase == PitchPhase.instrument && playing && real) {
-        pitch.update(wave, active: true);
+        final rev = pitch.revision;
+        if (pitch.update(wave, active: true) && pitch.revision != rev) {
+          final note = pitch.note;
+          if (note != null) {
+            if (scatter.viewport.isEmpty) scatter.layout(_canvasSize);
+            final ok = scatter.spawn(note);
+            // 满屏清空后立刻补上这一个：清空那一帧的字不该丢
+            if (!ok && scatter.isEmpty) {
+              scatter.layout(_canvasSize);
+              scatter.spawn(note);
+            }
+          }
+        }
       }
     } else {
       window.reset();
       loud.reset();
       pitch.reset();
       vocal.reset();
+      scatter.clear();
     }
 
     /* ---- 高潮因子：峰值保持 + 相对阈值（intro 安静不抖，drop 持续抖）---- */
@@ -302,7 +352,7 @@ class VizController extends ChangeNotifier implements TickerProvider {
        而 flutter_soloud 给的是**线性幅度**（音乐常见 0.001~0.3）。
        直接按 /255 等价换算会让曲线幅度只有 1px，看起来就是一条死平的环。
        这里跟踪本帧峰值做相对归一化 + gamma 提亮低幅 bin，任何标度都能用满量程。 */
-    if (fxOn()) {
+    if (spectrumEnabled()) {
       final mags = _magBuf;
       var peak = 0.0;
       for (var i = 0; i < kSpecN; i++) {
@@ -335,7 +385,7 @@ class VizController extends ChangeNotifier implements TickerProvider {
     }
 
     /* ---- 词云：播放进度驱动出场 + 生命周期推进 ---- */
-    if (fxOn() && _canvasSize != Size.zero) {
+    if (cloudEnabled() && _canvasSize != Size.zero) {
       cloud.tick(
         engine.positionSec,
         CloudEnv(
@@ -352,6 +402,8 @@ class VizController extends ChangeNotifier implements TickerProvider {
     }
 
     /* ---- 收尾：暂停且无频谱时淡出后停帧 ---- */
+    // 注意：散落字母一旦落位就是静态的，不需要逐帧推进 ——
+    // 只要没有别的特效要跑，就停帧把它们留在屏上（切歌/换相位时才清）。
     if (!_shouldRun()) {
       _ticker?.stop();
       _lastElapsed = null;

@@ -146,12 +146,22 @@ void main() {
     expect(d.note, 'E4');
 
     // 换到更高的音：应当跟过去（不是「已经锁了最高就不动」）
-    expect(_feed(d, 392.0, frames: 4), isTrue);
+    // 人声档要求连续 6 帧才算换音（比乐器档迟钝一档），所以喂 7 帧
+    expect(_feed(d, 392.0, frames: 7), isTrue);
     expect(d.note, 'G4');
 
     // 再往低走：人声档也要跟下来
-    expect(_feed(d, 261.63, frames: 4), isTrue);
+    expect(_feed(d, 261.63, frames: 7), isTrue);
     expect(d.note, 'C4');
+  });
+
+  test('人声档换音需要连续 6 帧：只闪 3 帧的泛音不跳字', () {
+    final d = PitchDetector.vocal();
+    expect(_feed(d, 329.63, frames: 4), isTrue);
+    expect(d.note, 'E4');
+    // 高八度的偶发泛音只持续 3 帧 → 不应改字
+    expect(_feed(d, 659.25, frames: 3), isFalse);
+    expect(d.note, 'E4');
   });
 
   test('人声档：单独的低频贝斯（60Hz）不锁', () {

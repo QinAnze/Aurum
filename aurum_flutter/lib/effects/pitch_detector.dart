@@ -13,6 +13,10 @@
 ///  1. YIN 阈值**自适应**：`max(下限, 全局最小 × 1.35)`，混音不干净时也能锁；
 ///  2. 带限后的 RMS 门槛（而不是整段混音的 RMS），弱一点的高音不会被贝斯掩蔽；
 ///  3. 人声/乐器各用各的窗口长度与稳定帧策略，不再用一套参数硬套两种场景。
+///
+/// 两种场景的灵敏度是**分开调**的，不要合并：
+///  - 乐器（lead / pluck / solo）：够快、够松 → 0.1s 级的瞬态也要抓住
+///  - 人声（歌词段）：更迟钝、更稳 → 只跟住真正唱稳的那个音
 library;
 
 import 'dart:math' as math;
@@ -58,17 +62,21 @@ class PitchDetector {
     this.sampleRate = 44100,
     this.decimate = 1,
     this.rmsFloor = 0.004,
-    this.clarityMin = 0.55,
-    this.stableFrames = 2,
+    this.clarityMin = 0.44,
+    this.stableFrames = 1,
     this.analysisSamples = 640,
-    this.yinThreshold = 0.20,
+    this.yinThreshold = 0.17,
     this.highPassHz = 220,
     this.lowPassHz = 0,
     this.takeHighest = true,
     this.holdFrames = 1,
   });
 
-  /// 人声：窗口 23ms、跟随旋律、换音需稳住 2 帧
+  /// 人声：窗口 23ms、跟随旋律、换音需稳住 6 帧（≈100ms）
+  ///
+  /// 灵敏度刻意比乐器模式**低一档**，但靠的是「换音要稳多久」而不是抬高
+  /// 置信度门槛：真实人声混在伴奏里没法要求干干净净，门槛抬太高会整段测不到；
+  /// 而单帧的泛音跳八度、气声、辅音，只要要求连续 6 帧才算换音就能压掉。
   factory PitchDetector.vocal({
     double minHz = 85,
     double maxHz = 1100,
@@ -79,7 +87,7 @@ class PitchDetector {
     double yinThreshold = 0.22,
     double highPassHz = 90,
     double lowPassHz = 1400,
-    int holdFrames = 3,
+    int holdFrames = 6,
   }) =>
       PitchDetector(
         target: PitchTarget.vocal,
