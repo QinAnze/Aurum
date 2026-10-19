@@ -41,3 +41,6 @@ _aurum_b*/
 
 # 本地调试截图 / 临时 fixture / 渲染输出
 desktop_qt/_dev/
+
+# 这个仓库只放 Flutter 版；Qt 融合项目只在本地，不入库
+desktop_qt/
