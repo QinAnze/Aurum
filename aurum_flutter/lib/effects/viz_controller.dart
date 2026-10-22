@@ -97,7 +97,12 @@ class VizController extends ChangeNotifier implements TickerProvider {
 
   /* ---------------- 对外暴露的逐帧状态 ---------------- */
   double climax = 0;
+
+  /// **圆环**频谱（老算法：峰值归一化 + gamma）
   final List<double> specVals = List.filled(kSpecN, 0.0);
+
+  /// **直线**频谱（对数分频 + 分频段平滑 + dB 窗口）
+  final List<double> lineVals = List.filled(kSpecN, 0.0);
 
   /// 底鼓检测器：中低频快速冲击 → 窗口四周打光（kick.env 即强度包络）
   final KickDetector kick = KickDetector();
@@ -138,26 +143,35 @@ class VizController extends ChangeNotifier implements TickerProvider {
   final math.Random _rng = math.Random();
   double loudMax = 0;
   double shakePhase = 0;
-  /// 取数缓冲区
+
+  /* ================= 两套频谱，各走各的算法 =================
+     圆环 [specVals]    —— 老的算法：线性分 bin + 每帧峰值归一化 + gamma
+                           + 固定 0.82 / 0.20 平滑。观感是"跟着峰值呼吸"。
+     直线 [lineVals]    —— 对数分频（低频粗、高频细）+ 分频段快慢
+                           + dB 窗口。观感是"低频有肉、高频有细节"。
+     两者共用同一份 fft，但取数、映射、平滑全部独立 —— 之前把它们合并成
+     一套，结果两边都不对。 */
+
+  /// 圆环的取数缓冲（按 i 线性分 bin）
   final Float64List _magBuf = Float64List(kSpecN);
 
-  /// 长期响度参考（近似 LUFS 的短窗平均）：频谱用它做归一化，
-  /// 而不是每帧峰值 —— 峰值归一化会让每帧都有一个 bin 顶到 1.0。
-  double _loudRef = 0;
+  /// 圆环的历史峰值（自适应标度用）
+  double _specPeak = 0;
 
-  /* ---------------- 频谱频段划分 ---------------- */
+  /// 直线的取数缓冲（按对数分 bin）
+  final Float64List _lineBuf = Float64List(kSpecN);
 
-  /// 频谱显示范围（Hz）。10Hz 以下多是直流/隆隆声，21000 已覆盖
-  /// 44.1k 采样的整个可听带（奈奎斯特 22050，留 1k 余量）。
+  /// 直线频谱的频段映射（按 fft 长度缓存）
+  Int32List? _lineBins;
+  int _lineBinN = -1;
+
+  /// 直线频谱显示范围（Hz）。10Hz 以下多是直流/隆隆声，
+  /// 21000 已覆盖 44.1k 采样的整个可听带（奈奎斯特 22050，留 1k 余量）。
   static const double specLowHz = 10;
   static const double specHighHz = 21000;
 
   /// 采样率：flutter_soloud 默认输出 44.1k
   static const double _kSampleRate = 44100;
-
-  /// 每个显示点对应的 FFT bin（按 fft 长度缓存）
-  Int32List? _specBins;
-  int _specBinN = -1;
 
   /// 频段划分的指数。**< 1 就是「低频粗、高频细」**：
   /// u = t^0.62 在开头涨得快 → 前 1/4 个点跨掉 4~5 个八度（低频每点一大片），
@@ -165,28 +179,26 @@ class VizController extends ChangeNotifier implements TickerProvider {
   /// 若用 1.0（标准对数谱）低频反而最细，与这里的观感诉求相反。
   static const double _kBandSkew = 0.62;
 
-  /// 相对长期响度的余量：0.55 相当于整体先压低约 5dB 再看谱，
-  /// 满量程素材才不会一路顶到上限。
-  static const double _kSpecHeadroom = 0.55;
+  /// 直线的显示窗口：soloud 的 fft 已经是 dB 映射后的 0..1
+  /// （W3C AnalyserNode：-100dB → 0、-30dB → 1，再响也是 1）。
+  /// 音乐里绝大多数 bin 落在 0.6~1.0，直接铺满就是一条贴顶的直线，
+  /// 所以只看 [0.46, 1.0]（≈ -68dB ~ -30dB）这一段，把它拉开到 0..1。
+  static const double _kLineLo = 0.46;
 
-  /// dB 映射的下限：-40dB 以下一律压到 0
-  static const double specFloorDb = -40;
+  /// 直线映射的 gamma（<1 抬中低段）
+  static const double _kLineGamma = 0.80;
 
-  /// 幅度 → 0..1 的 dB 映射。
-  ///
-  /// [gain] 由长期响度参考算出（≈ headroom / loudRef），所以这是
-  /// **相对整体响度**的谱，而不是每帧相对峰值 —— 后者会让每一帧
-  /// 都有一个 bin 正好等于 1.0，曲线永远贴着顶部那条线。
+  /// 直线频谱的 dB 窗口映射：**不看全频段最大值**，只用固定窗口，
+  /// 所以整体音量大小不会影响形状（母带压到 0dB 也不会一路平顶）。
   @visibleForTesting
-  static double specLevel(double mag, double gain) {
-    final x = mag * gain;
-    if (x <= 1e-9) return 0;
-    final db = 20 * (math.log(x) / math.ln10);
-    return ((db - specFloorDb) / -specFloorDb).clamp(0.0, 1.0).toDouble();
+  static double lineLevel(double raw) {
+    final x = ((raw - _kLineLo) / (1 - _kLineLo)).clamp(0.0, 1.0);
+    return math.pow(x, _kLineGamma).toDouble();
   }
 
+  /// 直线的频段映射：10Hz~21kHz 对数分点
   @visibleForTesting
-  static Int32List buildSpecBins(int fftLen) {
+  static Int32List buildLineBins(int fftLen) {
     final bins = Int32List(kSpecN);
     // fft 给的是 0..奈奎斯特的 magnitude，bin 宽 = 采样率/2/fftLen
     final binHz = (_kSampleRate / 2) / fftLen;
@@ -199,10 +211,10 @@ class VizController extends ChangeNotifier implements TickerProvider {
     return bins;
   }
 
-  /// 上升 / 回落系数：低频慢（0.30 / 0.08），高频快（0.92 / 0.34）。
+  /// 直线的分频段平滑：低频慢（0.30 / 0.08）、高频快（0.92 / 0.34）。
   /// 低频拖住能量看起来"够厚"，高频跟手才看得见细节。
-  static final Float64List _specAtk = _buildBandTau(0.30, 0.92);
-  static final Float64List _specRel = _buildBandTau(0.08, 0.34);
+  static final Float64List _lineAtk = _buildBandTau(0.30, 0.92);
+  static final Float64List _lineRel = _buildBandTau(0.08, 0.34);
 
   static Float64List _buildBandTau(double low, double high) {
     final out = Float64List(kSpecN);
@@ -350,7 +362,6 @@ class VizController extends ChangeNotifier implements TickerProvider {
     if (pos < _lastPos - 1.0) {
       // 切歌 / 回跳：响度统计与已锁定的音全部重来
       loud.reset();
-      _loudRef = 0; // 新歌的响度基准重新建立
       pitch.reset();
       vocal.reset();
       window.reset();
@@ -517,40 +528,26 @@ class VizController extends ChangeNotifier implements TickerProvider {
       shakeRot = 0;
     }
 
-    /* ---- 频谱取数 + 分频段平滑（对数分 bin + 长期响度参考 + dB 映射）----
-       flutter_soloud 给的是**线性幅度**，而且满量程素材（母带压到 0dB 的歌）
-       峰值能到 1.0。旧实现按**每帧峰值**归一化 —— 每帧都必然有一个 bin
-       顶到 1.0，整条曲线永远贴着天花板，动态范围全丢。
+    /* ---- 频谱：**两套算法，互不影响** ----
+       ① 圆环用老算法：线性分 bin + 每帧峰值归一化 + gamma + 0.82/0.20 平滑。
+       ② 直线用对数分频：低频粗/慢、高频细/快，再套固定 dB 窗口。
 
-       现在改成「相对长期响度」的 dB 映射：
-       - `_loudRef` 跟踪人声/音乐的整体电平（近似 LUFS 的短窗平均，
-         起得慢落得更慢），把 0dBFS 素材整体"压低"后再看细节
-       - `specLevel` 把幅度换成 dB，-40dB 以下压到 0、参考电平处为 1
-       这样弱段有肉、强段也不会一路平顶。 */
+       为什么直线不能沿用峰值归一化：flutter_soloud 的 fft 数据**本来就
+       已经是 dB 映射后的 0..1**（W3C AnalyserNode：-100dB → 0、-30dB → 1，
+       再响一律 1）。再除以本帧峰值，等于把本来就挤在 0.6~1.0 的值抬到 1.0，
+       整条线直接贴顶 —— 也就是"看起来就是全频段最大响度"。 */
+    /* ---- 频谱：**两套算法，互不影响** ---- */
     if (spectrumEnabled()) {
-      // 显示频段 → FFT bin 的映射按 fft 长度缓存；换窗口/切歌才重算
-      final fftLen = fft?.length ?? 0;
-      if (fftLen > 0 && fftLen != _specBinN) {
-        _specBins = buildSpecBins(fftLen);
-        _specBinN = fftLen;
-      }
       final mags = _magBuf;
-      final bins = _specBins;
 
-      // 长期响度参考：起快落慢（近似积分响度），只在真的有信号时更新
-      if (real && playing) {
-        final rms = _waveRms(wave);
-        final coef = rms > _loudRef ? 0.10 : 0.012;
-        _loudRef += (rms - _loudRef) * coef;
-      }
-      // 参考电平给个下限：极安静处不要把底噪放大成满屏
-      final refLv = math.max(_loudRef, 0.02);
-      final gain = _kSpecHeadroom / refLv;
-
+      /* --- ① 圆环：老算法（线性分 bin + 每帧峰值归一化 + gamma）--- */
+      var peak = 0.0;
       for (var i = 0; i < kSpecN; i++) {
         double m = 0;
-        if (real && fft != null && bins != null) {
-          m = fft[bins[i]].abs();
+        if (real && fft != null) {
+          final bin = 2 +
+              (math.pow(i / kSpecN, 1.15) * (fft.length - 4) * 0.65).floor();
+          if (bin < fft.length) m = fft[bin].abs();
         } else if (playing && vol > 0) {
           final beat = math.pow(
               math.sin(tsec * math.pi * (128 / 60) + i * 0.6).abs(), 1.6);
@@ -558,23 +555,50 @@ class VizController extends ChangeNotifier implements TickerProvider {
           m = (0.12 + 0.88 * beat) * (0.35 + 0.65 * wob);
         }
         mags[i] = m;
+        if (m > peak) peak = m;
+      }
+      // 峰值缓慢回落，避免爆点过后长期压扁
+      if (peak > _specPeak) {
+        _specPeak = peak;
+      } else {
+        _specPeak = math.max(peak, _specPeak * 0.9995);
+      }
+      final inv = _specPeak > 1e-9 ? 1.0 / _specPeak : 0.0;
+      for (var i = 0; i < kSpecN; i++) {
+        final norm = mags[i] * inv;
+        final t = norm <= 0 ? 0.0 : math.min(1.0, math.pow(norm, 0.55) * 1.15);
+        specVals[i] += (t - specVals[i]) * (t > specVals[i] ? 0.82 : 0.20);
       }
 
-      for (var i = 0; i < kSpecN; i++) {
-        final double t;
-        if (real && fft != null) {
-          t = specLevel(mags[i], gain);
-        } else if (playing && vol > 0) {
-          // BPM 模拟值本来就是 0..1 的幅度，不套 dB 映射
-          t = math.min(1.0, math.pow(mags[i], 0.72) * 1.1).toDouble();
-        } else {
-          t = 0;
-        }
-        // 分频段平滑：低频（i 小）起落都慢，把能量拖住；
-        // 高频跟手，抓瞬态。同一帧里两头的"手感"就是不一样。
-        final k = t > specVals[i] ? _specAtk[i] : _specRel[i];
-        specVals[i] += (t - specVals[i]) * k;
+      /* --- ② 直线：对数分频 + 分频段平滑 + dB 窗口（不看全频段峰值）--- */
+      final fftLen = fft?.length ?? 0;
+      if (fftLen > 0 && fftLen != _lineBinN) {
+        _lineBins = buildLineBins(fftLen);
+        _lineBinN = fftLen;
       }
+      final lineBins = _lineBins;
+      final lineMags = _lineBuf;
+      for (var i = 0; i < kSpecN; i++) {
+        double m = 0;
+        if (real && fft != null && lineBins != null) {
+          m = fft[lineBins[i]].abs();
+        } else if (playing && vol > 0) {
+          final beat = math.pow(
+              math.sin(tsec * math.pi * (128 / 60) + i * 0.6).abs(), 1.6);
+          final wob = 0.5 + 0.5 * math.sin(tsec * 1.7 + i * 1.31);
+          m = (0.12 + 0.88 * beat) * (0.35 + 0.65 * wob);
+        }
+        lineMags[i] = m;
+      }
+      for (var i = 0; i < kSpecN; i++) {
+        final t = (real && fft != null)
+            ? lineLevel(lineMags[i])
+            // BPM 模拟值是 0..1 的幅度，不套 dB 窗口
+            : lineLevel(0.46 + 0.54 * lineMags[i]);
+        final k = t > lineVals[i] ? _lineAtk[i] : _lineRel[i];
+        lineVals[i] += (t - lineVals[i]) * k;
+      }
+
       // 播放中才显示（无 FFT 时上游会给 BPM 模拟值，同样算「在播」）
       specLive = playing;
     } else {

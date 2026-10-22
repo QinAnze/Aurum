@@ -324,7 +324,9 @@ class _HomePageState extends State<HomePage> {
                   curve: Curves.easeOut,
                   child: CustomPaint(
                     painter: LinearSpectrumPainter(
-                      vals: _viz.specVals,
+                      // 直线用自己那套估值（对数分频 + dB 窗口），
+                      // 和圆环的峰值归一化互不影响
+                      vals: _viz.lineVals,
                       climax: _viz.climax,
                       oc: true,
                     ),

@@ -209,7 +209,7 @@ void main() {
   group('频谱频段划分', () {
     test('10Hz 起、21kHz 收，低频分得粗、高频分得细', () {
       const fftLen = 1024;
-      final bins = VizController.buildSpecBins(fftLen);
+      final bins = VizController.buildLineBins(fftLen);
       expect(bins, hasLength(kSpecN));
       expect(bins.first, 0, reason: '10Hz 落在 bin 0');
       const binHz = 22050 / fftLen; // 21.5Hz/bin
@@ -225,23 +225,26 @@ void main() {
           reason: '低频占的点数要明显少于高频（低频粗、高频细）');
     });
 
-    test('dB 映射：满量程不贴顶，弱信号也有肉，动态范围够宽', () {
-      // gain = 1 时：1.0 = 0dB 正好到顶
-      expect(VizController.specLevel(1.0, 1), closeTo(1.0, 0.001));
-      // -6dB ≈ 0.85，-20dB ≈ 0.5，-40dB 压到 0
-      expect(VizController.specLevel(0.5, 1), closeTo(0.85, 0.02));
-      expect(VizController.specLevel(0.1, 1), closeTo(0.50, 0.02));
-      expect(VizController.specLevel(0.01, 1), closeTo(0.0, 0.02));
-      // 满量程素材被整体压低（gain 0.55）后，0dB 素材的峰也不会一路贴顶
-      expect(VizController.specLevel(1.0, 0.55), lessThan(1.0));
-      expect(VizController.specLevel(1.0, 0.55), greaterThan(0.85));
-      // 单调
+    test('直线电平：固定 dB 窗口，不跟着"全频段最大值"走', () {
+      // raw 是 soloud 给的 0..1（W3C：-100dB→0，-30dB→1）
+      expect(VizController.lineLevel(0.46), closeTo(0.0, 0.001));
+      expect(VizController.lineLevel(1.0), closeTo(1.0, 0.001));
+      expect(VizController.lineLevel(0.20), 0.0, reason: '窗口以下一律 0');
+
+      // 窗口内单调递增，且中段有足够展开（0.73 ≈ -46dB → 约 0.57）
+      final mid = VizController.lineLevel(0.73);
+      expect(mid, greaterThan(0.4));
+      expect(mid, lessThan(0.75));
+
       var prev = -1.0;
-      for (final m in [0.002, 0.01, 0.05, 0.2, 0.6, 1.0]) {
-        final v = VizController.specLevel(m, 0.55);
+      for (final raw in [0.0, 0.30, 0.46, 0.60, 0.80, 0.95, 1.0]) {
+        final v = VizController.lineLevel(raw);
         expect(v, greaterThanOrEqualTo(prev));
         prev = v;
       }
+
+      // 关键：0.9 这种很响的 bin 也不会被抬到 1.0 —— 没有峰值归一化
+      expect(VizController.lineLevel(0.90), lessThan(0.95));
     });
   });
 
@@ -271,13 +274,12 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    test('画布尺寸为零时不绘制也不抛异常', () {
+    test('shouldRepaint 恒为 true（逐帧数据都在变）', () {
       final p = LinearSpectrumPainter(
         vals: List<double>.filled(kSpecN, 0.5),
         climax: 1,
         oc: true,
       );
-      // 直接调用 paint 需要 Canvas，这里只验证 shouldRepaint 契约
       expect(p.shouldRepaint(p), isTrue);
     });
   });
