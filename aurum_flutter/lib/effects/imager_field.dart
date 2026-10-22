@@ -2,15 +2,20 @@
 ///
 /// 读法：**圆心 = 完全单声道，越往外的圈 = 声像越宽**（Ozone Imager 那一套）。
 ///
-/// 它不是"把点搬到声像数值所在的位置"，而是一代一代的尘点：
-///  - 每颗点从**圆心附近出生**，寿命 0.55~1.1s
-///  - 生长期向外飘：声像越宽推得越快、能跑到越外圈
-///  - 老的点在寿命末尾淡出消失，同一时刻有新点从中心冒出来 ——
-///    任何时刻屏上都是"新旧混在一起"，所以看得出方向，又不会像一根指针
-///  - 每颗点都带简化版 **boids**（对齐 / 凝聚 / 分离），成团地游而不是直线射出
+/// 运动是**弹道**而不是"平移到位"：
+///  - 声像宽 → 弹簧把点甩向外圈；声像一收，弹簧 + 重力把它们**自己落回来**
+///  - 位置不是 lerp 到目标半径，而是力积分：会冲过头、会回落、会绕流
+///  - 每颗点有**自己的层位**（[ImagerParticle.layer]），所以是一片雾，
+///    不是所有点被拉到同一个半径上排成一圈
+///  - 落到内圈（[_floor]）弹一下，反弹速度保底，所以永远是活的
+///  - 每颗点还跑简化版 boids（对齐 / 凝聚 / 分离），成团地绕
 ///
-/// 性能：粒子数 [kCount]、邻居采样 [kNeighbors]、扇区 [kBins] 三个参数
-/// 决定开销；绘制走 [ImagerPainter] 的分档批量画（见那边的注释）。
+/// 旧版本是"点位 = 声像数值"（每个点平滑移到对应半径），看起来像指针；
+/// 再之前的生命周期版是"出生→飘出→淡出→重生"，在 drop 段会因为点全缩在
+/// 封面背后而整片看不见。现在内圈地板放在**封面圆之外**，任何宽度下都有点。
+///
+/// 性能：绘制走 [ImagerPainter] 的**分档批量画**（alpha × 半径分桶，
+/// `drawRawPoints` 一次画一整桶），逐点 `drawCircle` 是几百次独立绘制调用。
 library;
 
 import 'dart:math' as math;
@@ -32,30 +37,25 @@ class ImagerParticle {
   double radius = 0;
   double angle = 0;
 
-  /// 年龄 / 寿命（秒）
-  double age = 0;
-  double life = 1;
-
-  /// 当前的淡入淡出系数 0..1（由 tick 算好，绘制层只读）
-  double alpha = 0;
-
-  /// 点半径（px）
-  double dot = 1.5;
-
   /// 亮度系数（0.5..1）
   double gain = 1;
 
   /// 个体脾气：受力与限速的差异来源，让群体不整齐
   double temper = 1;
+
+  /// 个体在壳层里的"层位"：0 贴内圈、1 到当前壳层。
+  /// 弹簧如果没有个体差，所有点会被拉到**同一个半径**上排成一圈虚线；
+  /// 这个字段让整片是雾状分布。
+  double layer = 1;
 }
 
 class ImagerFieldController {
   /// 粒子集合
   final List<ImagerParticle> dots = [];
 
-  /// 粒子数量。生命周期让大量点在中心附近"刚出生"，所以不用堆到 700
-  /// 也有密度感；460 是密度与开销的折中。
-  static const int kCount = 460;
+  /// 粒子数量：够密才有"声场"的雾面感。
+  /// 绘制已经改成批量画（12 次 drawRawPoints），760 点的物理只要 ~0.15ms/帧。
+  static const int kCount = 760;
 
   /// 中心（封面中心；封面还没布局时退回画布中心）
   Offset center = Offset.zero;
@@ -66,56 +66,86 @@ class ImagerFieldController {
   /// 当前的声像宽度（0..1），由 VizController 每帧灌入
   double width = 0;
 
+  /// 内圈地板（归一化半径）。**必须大于封面圆的相对半径**，
+  /// 否则点会藏在专辑封面背后 —— drop 段整片消失就是这么来的。
+  double get floorRadius => _floor;
+  double _floor = 0.30;
+
   final math.Random _rng = math.Random();
+
+  /* ---------------- 物理参数 ---------------- */
+
+  /// 弹簧刚度：把点往"当前声像对应的壳层"拉，力 ∝ 距离，
+  /// 所以会冲过、回落，而不是被直接摆到那个半径上。
+  /// 刚度太大 = 硬邦邦地贴在壳层上，太小 = 飘忽不落地。
+  static const double _kSpring = 2.0;
+
+  /// 恒定向心重力：给"落"一个明确方向（声像收窄时掉得更干脆）
+  static const double _kGravity = 0.25;
+
+  /// 壳层位置（归一化半径）：单声道贴着内圈，最宽时到外圈附近。
+  /// 上界刻意不到 1.0 —— 常数推力会顶到墙上，弹簧模型则有平衡点。
+  static const double _kShellLo = 0.10;
+  static const double _kShellHi = 0.85;
+
+  /// 切向扰动：让整团绕中心流动，而不是纯放射
+  static const double _kSwirl = 0.40;
+
+  /// 内圈反弹的保底径向速度（否则会停在地板上不动）
+  static const double _kHop = 0.20;
+
+  /// 反弹系数
+  static const double _kRestFloor = 0.50;
+  static const double _kRestWall = 0.35;
+
+  static const double _kMaxSpeed = 1.10;
 
   /* ---------------- boids 参数 ---------------- */
 
-  static const double _kMaxSpeedLo = 0.20;
-  static const double _kMaxSpeedHi = 1.05;
   static const double _kSepR = 0.05;
   static const double _kAlignR = 0.13;
 
-  /// 每帧最多跟几个邻居比。3 个就够形成群落感，7 个是纯浪费。
+  /// 每帧最多跟几个邻居比：3 个就够形成群落感
   static const int _kNeighbors = 3;
 
-  /// 扇区数量（24 个 = 每个 15°，密度足够又不至于每桶只有一两个点）
+  /// 扇区数量（24 个 = 每 15° 一桶）
   static const int _kBins = 24;
 
-  /// 复用的分桶，避免每帧新建 List
   final List<List<int>> _bins =
       List.generate(_kBins, (_) => <int>[], growable: false);
 
   /* ---------------- 绘制批量缓冲 ---------------- */
 
-  /// 透明度分档：一个档位一次 drawRawPoints
   static const int alphaBuckets = 6;
-  /// 点半径分档
   static const int sizeBuckets = 2;
 
-  /// 预分配的坐标缓冲（每档最多 kCount 个点，x/y 交错）
   final List<Float32List> pointBufs = List.generate(
     alphaBuckets * sizeBuckets,
     (_) => Float32List(kCount * 2),
   );
 
-  /// 每档当前写入的浮点数个数（2 × 点数）
   final List<int> pointLens = List.filled(alphaBuckets * sizeBuckets, 0);
 
-  /// 每档一支预建好的画笔（只有颜色逐帧改，避免每帧 new Paint）
   final List<Paint> dotPaints = List.generate(
     alphaBuckets * sizeBuckets,
     (i) => Paint()
       ..style = PaintingStyle.fill
       ..strokeCap = StrokeCap.round
-      ..strokeWidth = (i % sizeBuckets) == 0 ? 1.6 : 2.7,
+      ..strokeWidth = (i % sizeBuckets) == 0 ? 2.0 : 3.2,
   );
 
-  /// 视口或中心变化时调用（幂等）
-  void configure(Size viewport, Offset? coverCenter) {
+  /// 视口或中心变化时调用（幂等）。
+  ///
+  /// [coverRadius] 是封面圆的半径（px）：内圈地板会放在它外面一点，
+  /// 保证颗粒永远露在封面之外，不会藏到专辑图背后。
+  void configure(Size viewport, Offset? coverCenter, {double coverRadius = 0}) {
     if (viewport.isEmpty) return;
     center = coverCenter ?? Offset(viewport.width / 2, viewport.height / 2);
     // 扩散半径取短边的一大半：能明显超出封面圆，但不会顶到面板边缘
     maxRadius = viewport.shortestSide * 0.62;
+    if (coverRadius > 0) {
+      _floor = (coverRadius / maxRadius * 1.10).clamp(0.06, 0.82);
+    }
     if (dots.isEmpty) _seed();
   }
 
@@ -123,52 +153,33 @@ class ImagerFieldController {
     dots.clear();
     for (var i = 0; i < kCount; i++) {
       final p = ImagerParticle();
-      _born(p);
+      // 开方分布：中段密、外圈疏，像声场
+      final r = _floor + (1 - _floor) * math.sqrt(_rng.nextDouble());
+      final a = _rng.nextDouble() * math.pi * 2;
+      final tangential = 0.15 + _rng.nextDouble() * 0.35;
+      p.x = math.cos(a) * r;
+      p.y = math.sin(a) * r;
+      p.vx = -math.sin(a) * tangential;
+      p.vy = math.cos(a) * tangential;
+      p.radius = r;
+      p.angle = a;
+      p.gain = 0.5 + _rng.nextDouble() * 0.5;
+      p.temper = 0.7 + _rng.nextDouble() * 0.6;
+      // 开方 → 靠内层的点多一些，外圈稀，像声场的衰减
+      p.layer = math.sqrt(_rng.nextDouble());
       dots.add(p);
     }
-    // 预热：否则第一帧所有点都挤在圆心、像一颗粒子炸开。
-    // 一次性跑 1.5 秒，之后就永远是"各年龄段混着"的稳态。
-    for (var i = 0; i < 90; i++) {
-      _step(1 / 60, 0.5);
-    }
   }
 
-  /// 出生 / 重生：位置贴近圆心，随机方向给一点初速
-  void _born(ImagerParticle p) {
-    final a = _rng.nextDouble() * math.pi * 2;
-    // 出生点贴着圆心（0.09 以内）—— 这就是"新的从中间出来"
-    final r = _rng.nextDouble() * 0.09;
-    p.x = math.cos(a) * r;
-    p.y = math.sin(a) * r;
-    final sp = 0.08 + _rng.nextDouble() * 0.10 + width * 0.30;
-    final dir = a + (_rng.nextDouble() - 0.5) * 0.9;
-    p.vx = math.cos(dir) * sp;
-    p.vy = math.sin(dir) * sp;
-    p.age = 0;
-    p.life = 0.55 + _rng.nextDouble() * 0.55;
-    p.alpha = 0;
-    p.dot = 0.9 + _rng.nextDouble() * 1.5;
-    p.gain = 0.5 + _rng.nextDouble() * 0.5;
-    p.temper = 0.7 + _rng.nextDouble() * 0.6;
-    p.radius = r;
-    p.angle = a;
-  }
-
-  /// 绘制时的可达半径系数：单声道收成中心一小团，最宽时铺满整圈。
-  ///
-  /// 粒子的**实际行程**已经由推力（± 声像）决定，这里只做一点整体收放，
-  /// 让"很窄"的段落更聚拢一点，不至于像雾一样糊住封面。
-  double get reachFactor => 0.62 + width * 0.38;
+  /// 绘制时的可达半径系数：窄时整体收一点，宽时铺满
+  double get reachFactor => 0.72 + width * 0.28;
 
   /// 每帧推进。[dt] 秒，[w] 当前声像宽度 0..1。
   void tick(double dt, double w) {
     if (dots.isEmpty || dt <= 0) return;
     width = w;
-    _step(dt, w);
-  }
 
-  void _step(double dt, double w) {
-    // 1) 按角度分桶，供邻居查询（O(n²) 在几百个点时也可以，但没必要）
+    // 1) 按角度分桶，供邻居查询
     for (final b in _bins) {
       b.clear();
     }
@@ -177,35 +188,26 @@ class ImagerFieldController {
     }
 
     // 2) 逐个积分
+    // 目标壳层：声像宽 → 更外；这个半径只作为弹簧的平衡点，
+    // 点不会"瞬移"过去。
+    final shell =
+        _floor + (1 - _floor) * (_kShellLo + (_kShellHi - _kShellLo) * w);
     for (var i = 0; i < dots.length; i++) {
       final p = dots[i];
-      p.age += dt;
-      if (p.age >= p.life) {
-        // 老点到此为止，新点从中心接着来
-        _born(p);
-        continue;
-      }
-
       var r = math.sqrt(p.x * p.x + p.y * p.y);
-      // r ≈ 0 时没有方向，用出生角度兜底（否则会卡在圆心不动）
+      // r ≈ 0 时没有方向，用上次的角度兜底
       final ux = r > 1e-4 ? p.x / r : math.cos(p.angle);
       final uy = r > 1e-4 ? p.y / r : math.sin(p.angle);
 
-      // ---- 向外：声像越宽推得越猛（"宽就往外蹦"） ----
-      final push = 0.45 + w * 1.55;
-      var ax = ux * push * p.temper;
-      var ay = uy * push * p.temper;
+      // ---- 弹簧（朝"自己那层"）+ 重力（朝中心）：甩出去、回落、绕流 ----
+      final target = _floor + (shell - _floor) * (0.10 + 0.90 * p.layer);
+      final radial = _kSpring * (target - r) - _kGravity;
+      var ax = ux * radial * p.temper;
+      var ay = uy * radial * p.temper;
 
-      // ---- 轻微切向：整团绕中心流动，不像烟花一样纯放射 ----
-      ax += -uy * 0.45 * p.temper;
-      ay += ux * 0.45 * p.temper;
-
-      // ---- 软边界：接近外圈就回拉，避免堆成一圈虚线 ----
-      if (r > 0.90) {
-        final k = (r - 0.90) * 8;
-        ax -= ux * k;
-        ay -= uy * k;
-      }
+      // ---- 切向扰动：绕中心流动，不至于像烟花纯放射 ----
+      ax += -uy * _kSwirl * p.temper;
+      ay += ux * _kSwirl * p.temper;
 
       // ---- boids ----
       final bin = _bins[_binIndexOf(p)];
@@ -235,10 +237,10 @@ class ImagerFieldController {
           }
         }
         if (cnt > 0) {
-          ax += (cohX / cnt - p.x) * 0.9;
-          ay += (cohY / cnt - p.y) * 0.9;
-          ax += (aliX / cnt - p.vx) * 1.9;
-          ay += (aliY / cnt - p.vy) * 1.9;
+          ax += (cohX / cnt - p.x) * 0.8;
+          ay += (cohY / cnt - p.y) * 0.8;
+          ax += (aliX / cnt - p.vx) * 1.7;
+          ay += (aliY / cnt - p.vy) * 1.7;
           ax += sepX;
           ay += sepY;
         }
@@ -247,13 +249,12 @@ class ImagerFieldController {
       // ---- 限速 + 阻尼 ----
       p.vx += ax * dt;
       p.vy += ay * dt;
-      final damping = 1 - 1.3 * dt;
+      final damping = 1 - 0.95 * dt;
       p.vx *= damping;
       p.vy *= damping;
-      final cap = _kMaxSpeedLo + w * (_kMaxSpeedHi - _kMaxSpeedLo);
       final sp = math.sqrt(p.vx * p.vx + p.vy * p.vy);
-      if (sp > cap) {
-        final k = cap / sp;
+      if (sp > _kMaxSpeed) {
+        final k = _kMaxSpeed / sp;
         p.vx *= k;
         p.vy *= k;
       }
@@ -262,17 +263,32 @@ class ImagerFieldController {
       p.y += p.vy * dt;
       r = math.sqrt(p.x * p.x + p.y * p.y);
 
-      // 飞出最外圈就让它"死"在边界外，而不是弹回来
-      if (r > 1.08) {
-        _born(p);
-        continue;
+      // ---- 内圈地板：落到封面外面就弹起来（保底跳速，永远有动静） ----
+      if (r < _floor) {
+        final vr = p.vx * ux + p.vy * uy;
+        p.x = ux * _floor;
+        p.y = uy * _floor;
+        r = _floor;
+        if (vr < 0) {
+          // 反弹：径向分量反向并衰减，再给一点随机扰动
+          final rebound = math.max(_kHop, -vr * _kRestFloor);
+          p.vx += ux * (rebound - vr);
+          p.vy += uy * (rebound - vr);
+          p.vx += (_rng.nextDouble() - 0.5) * 0.10;
+          p.vy += (_rng.nextDouble() - 0.5) * 0.10;
+        }
+      } else if (r > 1) {
+        // ---- 外墙：别飞出视口 ----
+        final vr = p.vx * ux + p.vy * uy;
+        p.x = ux;
+        p.y = uy;
+        r = 1;
+        if (vr > 0) {
+          final rebound = vr * _kRestWall;
+          p.vx += ux * (rebound - vr) * 2;
+          p.vy += uy * (rebound - vr) * 2;
+        }
       }
-
-      // ---- 淡入淡出：出生 16% 淡入，寿命过半后开始淡出 ----
-      final t = p.age / p.life;
-      p.alpha = t < 0.16
-          ? t / 0.16
-          : (t > 0.52 ? ((1 - t) / 0.48).clamp(0.0, 1.0) : 1.0);
 
       p.radius = r;
       p.angle = math.atan2(p.y, p.x);
@@ -325,10 +341,8 @@ class ImagerPainter extends CustomPainter {
 
     final c = controller.center;
     final reach = controller.maxRadius * controller.reachFactor;
-    // 整体浓度跟宽度走：单声道时只是几点微光，宽时整层亮起来
-    // 生命周期让每颗点有一半时间在淡入淡出，整体比常亮版本暗，
-    // 所以基础亮度给得比之前高一点
-    final base = 0.30 + controller.width * 0.50;
+    // 整体浓度跟宽度走，但给足底：窄声像时也要看得见点
+    final base = 0.34 + controller.width * 0.40;
 
     const ab = ImagerFieldController.alphaBuckets;
     const sb = ImagerFieldController.sizeBuckets;
@@ -338,13 +352,11 @@ class ImagerPainter extends CustomPainter {
       lens[i] = 0;
     }
 
-    // 分档：逐点 drawCircle 在几百个点时是主要开销（每点一条独立绘制指令），
-    // 按 (透明度 × 半径) 分 12 档批量画，就只剩 12 次 drawRawPoints。
+    // 分档：逐点 drawCircle 是几百次独立绘制调用，按 (亮度 × 半径) 分 12 档
+    // 批量画就只剩 12 次 drawRawPoints。
     for (final p in dots) {
-      final a = p.alpha * p.gain;
-      if (a <= 0.02) continue;
-      final bi = (a * (ab - 1)).round().clamp(0, ab - 1);
-      final k = bi * sb + (p.dot > 1.9 ? 1 : 0);
+      final bi = (p.gain * (ab - 1)).round().clamp(0, ab - 1);
+      final k = bi * sb + (p.gain > 0.78 ? 1 : 0);
       final buf = bufs[k];
       final n = lens[k];
       if (n + 2 > buf.length) continue;

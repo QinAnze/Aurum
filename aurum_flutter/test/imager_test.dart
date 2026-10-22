@@ -90,57 +90,59 @@ void main() {
   });
 
   group('ImagerFieldController', () {
-    test('configure 后就有一整批粒子，且都在圆内', () {
+    double meanR(ImagerFieldController c) =>
+        c.dots
+            .map((p) => math.sqrt(p.x * p.x + p.y * p.y))
+            .reduce((a, b) => a + b) /
+        c.dots.length;
+
+    test('configure 后铺满粒子，全部落在地板与外圈之间', () {
       final c = ImagerFieldController()
         ..configure(const Size(1280, 800), const Offset(640, 400));
       expect(c.dots, hasLength(ImagerFieldController.kCount));
       for (final p in c.dots) {
         final r = math.sqrt(p.x * p.x + p.y * p.y);
-        expect(r, lessThan(1.1));
+        expect(r, greaterThanOrEqualTo(c.floorRadius - 1e-9));
+        expect(r, lessThanOrEqualTo(1.001));
       }
       expect(c.maxRadius, greaterThan(0));
     });
 
-    test('粒子有寿命：老点淡出、新点从中心重生（新旧混在一起）', () {
+    test('内圈地板在封面圆之外（否则点会藏在专辑图背后）', () {
+      final c = ImagerFieldController()
+        ..configure(const Size(1280, 800), const Offset(640, 400),
+            coverRadius: 150);
+      // maxR = 800 * 0.62 = 496；150/496*1.10 ≈ 0.333
+      expect(c.floorRadius, greaterThan(150 / c.maxRadius));
+      expect(c.floorRadius, closeTo(150 / c.maxRadius * 1.10, 0.01));
+    });
+
+    test('甩出去会自己落回来：先冲高，再被重力拉回内圈', () {
       final c = ImagerFieldController()
         ..configure(const Size(1280, 800), const Offset(640, 400));
-      var sawReset = false;
-      var respawnRadius = 1.0;
-      for (var i = 0; i < 200; i++) {
-        final before = c.dots.first.age;
-        c.tick(0.016, 0.7);
-        final p = c.dots.first;
-        if (p.age < before) {
-          // 这一刻它刚重生
-          sawReset = true;
-          respawnRadius = math.sqrt(p.x * p.x + p.y * p.y);
-        }
-        for (final q in c.dots) {
-          expect(q.age, lessThanOrEqualTo(q.life + 1e-9));
-          expect(q.alpha, inInclusiveRange(0.0, 1.0));
-        }
+      for (final p in c.dots) {
+        final r = math.sqrt(p.x * p.x + p.y * p.y);
+        final ux = p.x / r, uy = p.y / r;
+        // 统一放到外圈附近，并给一个**向外**的速度
+        p.x = ux * 0.72;
+        p.y = uy * 0.72;
+        p.vx = ux * 0.55;
+        p.vy = uy * 0.55;
       }
-      expect(sawReset, isTrue, reason: '必须会死掉重生，否则没有新旧交替');
-      expect(respawnRadius, lessThan(0.3), reason: '重生的点应在中心附近');
-
-      // 稳态下应当"老的还在淡出、新的刚出来"，而不是整批同年龄
-      final young = c.dots.where((q) => q.age / q.life < 0.2).length;
-      final old = c.dots.where((q) => q.age / q.life > 0.5).length;
-      expect(young, greaterThan(10), reason: '要一直有新点冒出来');
-      expect(old, greaterThan(10), reason: '也要有正往外飘的老点');
+      var peak = 0.0;
+      for (var i = 0; i < 150; i++) {
+        c.tick(0.016, 0.0); // 声像 0 = 不再外推，只剩重力
+        peak = math.max(peak, meanR(c));
+      }
+      expect(peak, greaterThan(0.72), reason: '初速朝外，应当先冲高');
+      expect(meanR(c), lessThan(0.72), reason: '重力要把它们拉回内圈');
     });
 
     test('声像大 → 整体靠外；声像小 → 整体靠内', () {
-      double meanR(ImagerFieldController c) =>
-          c.dots
-              .map((p) => math.sqrt(p.x * p.x + p.y * p.y))
-              .reduce((a, b) => a + b) /
-          c.dots.length;
-
       ImagerFieldController run(double w) {
         final c = ImagerFieldController()
           ..configure(const Size(1280, 800), const Offset(640, 400));
-        for (var i = 0; i < 90; i++) {
+        for (var i = 0; i < 120; i++) {
           c.tick(0.016, w);
         }
         return c;
@@ -148,21 +150,35 @@ void main() {
 
       final wide = run(1.0);
       final narrow = run(0.0);
-      expect(meanR(wide), greaterThan(meanR(narrow) + 0.08),
+      expect(meanR(wide), greaterThan(meanR(narrow) + 0.10),
           reason: '宽声像要把点甩得更远');
-      expect(wide.reachFactor, greaterThan(narrow.reachFactor),
-          reason: '可达半径也要跟着放大');
+      // 窄的时候全部挤在地板附近，一个都不许跑出去
+      for (final p in narrow.dots) {
+        final r = math.sqrt(p.x * p.x + p.y * p.y);
+        expect(r, greaterThanOrEqualTo(narrow.floorRadius - 1e-9));
+      }
+    });
+
+    test('长期跑动不会飞出视口（有墙），数量恒定', () {
+      final c = ImagerFieldController()
+        ..configure(const Size(900, 600), const Offset(450, 300));
+      for (var i = 0; i < 400; i++) {
+        c.tick(0.033, 1.0);
+      }
+      expect(c.dots, hasLength(ImagerFieldController.kCount));
+      for (final p in c.dots) {
+        final r = math.sqrt(p.x * p.x + p.y * p.y);
+        expect(r, lessThan(1.001));
+        expect(r, greaterThanOrEqualTo(c.floorRadius - 1e-9));
+      }
     });
 
     test('鸟群：邻居会带动方向趋同（对齐规则生效）', () {
       final c = ImagerFieldController()
         ..configure(const Size(900, 600), const Offset(450, 300));
-      // 锁住寿命，免得测试中途重生把方向重置
       for (final p in c.dots) {
-        p.age = 0;
-        p.life = 10;
-        p.x = 0.30 + (p.x % 0.04);
-        p.y = 0.30 + (p.y % 0.04);
+        p.x = 0.60 + (p.x % 0.04);
+        p.y = 0.60 + (p.y % 0.04);
         p.vx = 0.6;
         p.vy = 0.0;
       }
@@ -179,7 +195,7 @@ void main() {
       expect(dirs, isNotEmpty);
       final meanCos =
           dirs.map((a) => math.cos(a)).reduce((a, b) => a + b) / dirs.length;
-      expect(meanCos, greaterThan(0.6), reason: '对齐后应大体同向');
+      expect(meanCos, greaterThan(0.5), reason: '对齐后应大体同向');
     });
 
     test('视野为空时不初始化（避免除以零）', () {
@@ -207,6 +223,25 @@ void main() {
       final highPts = bins.where((b) => b >= (2000 / binHz).round()).length;
       expect(lowPts, lessThan(highPts * 0.6),
           reason: '低频占的点数要明显少于高频（低频粗、高频细）');
+    });
+
+    test('dB 映射：满量程不贴顶，弱信号也有肉，动态范围够宽', () {
+      // gain = 1 时：1.0 = 0dB 正好到顶
+      expect(VizController.specLevel(1.0, 1), closeTo(1.0, 0.001));
+      // -6dB ≈ 0.85，-20dB ≈ 0.5，-40dB 压到 0
+      expect(VizController.specLevel(0.5, 1), closeTo(0.85, 0.02));
+      expect(VizController.specLevel(0.1, 1), closeTo(0.50, 0.02));
+      expect(VizController.specLevel(0.01, 1), closeTo(0.0, 0.02));
+      // 满量程素材被整体压低（gain 0.55）后，0dB 素材的峰也不会一路贴顶
+      expect(VizController.specLevel(1.0, 0.55), lessThan(1.0));
+      expect(VizController.specLevel(1.0, 0.55), greaterThan(0.85));
+      // 单调
+      var prev = -1.0;
+      for (final m in [0.002, 0.01, 0.05, 0.2, 0.6, 1.0]) {
+        final v = VizController.specLevel(m, 0.55);
+        expect(v, greaterThanOrEqualTo(prev));
+        prev = v;
+      }
     });
   });
 

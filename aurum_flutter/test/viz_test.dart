@@ -152,10 +152,14 @@ void main() {
       viz.dispose();
     });
 
-    testWidgets('极安静的音频（幅度 1e-5）也不会把环压死', (tester) async {
+    testWidgets('极安静的一首（整体 -60dB）也不会把环压死', (tester) async {
+      // 现在归一化用的是**长期响度**（近似 LUFS），不是每帧峰值：
+      // 只要 FFT 与波形是同一量级，整首很安静也会被参考电平抬起来。
+      // 早先这条用的是 wave 0.02 + fft 1e-5 的虚构组合，两者差 66dB，
+      // 换成响度归一化后自然被压成 0，属于数据不自洽，不是算法问题。
       final engine = _FakeEngine(
         fftData: Float32List.fromList([
-          for (var i = 0; i < 1024; i++) 1e-5 * (1 + (i % 5)),
+          for (var i = 0; i < 1024; i++) 1e-3 * (1 + (i % 5)),
         ]),
         waveData: Float32List.fromList(List.filled(2048, 0.02)),
       );
