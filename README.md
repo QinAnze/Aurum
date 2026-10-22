@@ -84,17 +84,6 @@ flutter run -d windows
     └── windows/        Windows runner
 ```
 
-## 发版
-
-版本号只改 `aurum_flutter/pubspec.yaml` 的 `version:`，Flutter 会写进 exe 文件属性。
-
-```bash
-git tag v0.5.0 && git push origin main --tags
-```
-
-打 `v*` 标签会触发 Actions 构建并把 zip 挂到 Release；产物名 `Aurum-<version>-windows-x64.zip`。
-本地 `flutter build windows --release` 只用于验证，不作为发布包。
-
 ## 版权
 
 仅供学习交流，音乐版权归原平台所有。
