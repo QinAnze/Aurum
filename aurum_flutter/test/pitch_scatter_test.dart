@@ -4,10 +4,12 @@
 // 每个字符固定 1em 宽，'C#6' 会比真实字形宽一倍多 —— 覆盖率与落位
 // 结论全不可信。加载真实字体后，这里量到的尺寸就是运行时画的尺寸。
 import 'dart:io';
+import 'dart:ui' as ui;
 import 'dart:math' as math;
 
 import 'package:aurum/effects/pitch_scatter.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -305,35 +307,60 @@ void main() {
     expect(c.pulse, closeTo(1.0, 1e-9));
   });
 
-  testWidgets('脉动真的把字放大（渲染层矩阵）', (tester) async {
+  testWidgets('散落层真的画出来了，且脉动会把字放大（像素包围盒）', (tester) async {
+    // 字是按 1280×800 落位的，测试画布必须同尺寸，否则字落在视口外
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
     final c = make();
     c.spawn('E5', rnd: math.Random(3));
     for (var i = 0; i < 40; i++) {
       c.tick(0.016); // 演完入场
     }
-    Future<double> maxScale() async {
-      await tester.pumpWidget(MaterialApp(
-        home: SizedBox(
-          width: 1280,
-          height: 800,
-          child: PitchScatter(controller: c),
+
+    /// 渲染一次，量出非透明像素的包围盒宽度
+    Future<double> paintedWidth() async {
+      final key = GlobalKey();
+      await tester.pumpWidget(Directionality(
+        textDirection: TextDirection.ltr,
+        child: RepaintBoundary(
+          key: key,
+          child: SizedBox(
+            width: 1280,
+            height: 800,
+            child: PitchScatter(controller: c),
+          ),
         ),
       ));
       await tester.pump();
-      var m = 0.0;
-      for (final t in tester.widgetList<Transform>(find.byType(Transform))) {
-        final v = t.transform.storage[0];
-        if (v > m) m = v;
+      final boundary =
+          key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+      final image = (await tester.runAsync(() => boundary.toImage()))!;
+      final data = await tester
+          .runAsync(() => image.toByteData(format: ui.ImageByteFormat.rawRgba));
+      expect(data, isNotNull, reason: '裁剪层必须能被读出来');
+      final bytes = data!.buffer.asUint8List();
+      var minX = 1 << 20, maxX = -1;
+      for (var y = 0; y < image.height; y++) {
+        for (var x = 0; x < image.width; x++) {
+          final a = bytes[(y * image.width + x) * 4 + 3];
+          if (a > 8) {
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+          }
+        }
       }
-      // 缩放为 1 时 widget 会跳过 Transform，此时就是原尺寸
-      return m == 0 ? 1.0 : m;
+      expect(maxX, greaterThanOrEqualTo(minX), reason: '一个字都没画出来？');
+      return (maxX - minX + 1).toDouble();
     }
 
     c.setPulse(1);
-    expect(await maxScale(), closeTo(1.0, 0.001), reason: '没高潮时原尺寸');
-
+    final calm = await paintedWidth();
     c.setPulse(1.24);
-    expect(await maxScale(), closeTo(1.24, 0.001), reason: '高潮时放大');
+    final hot = await paintedWidth();
+    expect(calm, greaterThan(0));
+    expect(hot / calm, closeTo(1.24, 0.06), reason: '高潮时字要被放大');
   });
 
   test('颜色取自封面取色板，不是清一色白', () {

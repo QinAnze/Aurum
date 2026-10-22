@@ -131,14 +131,17 @@ void main() {
       expect(find.text(label), findsNothing, reason: '收起时不该占位');
     }
 
-    // 胶囊与总开关同一行、同一中线（用户要求「处于同一高度」）
-    final toggleRect = tester.getRect(find.text('ON'));
+    // 特效开关与胶囊竖排成一列贴在右边（并排会挤掉歌名的宽度）
+    final toggleRect =
+        tester.getRect(find.byKey(const ValueKey('fx-master')));
     final chipRect = tester.getRect(chip);
-    expect(
-      (chipRect.center.dy - toggleRect.center.dy).abs(),
-      lessThan(2),
-      reason: '特效胶囊要和总开关同一中线',
-    );
+    expect(chipRect.center.dy, greaterThan(toggleRect.center.dy),
+        reason: '胶囊在总开关下面');
+    expect((chipRect.right - toggleRect.right).abs(), lessThan(2),
+        reason: '两者右边缘对齐成一列');
+    // 歌名要拿到剩下的宽度：标题左边缘到特效列之间得有足够空间
+    expect(toggleRect.left, greaterThan(600),
+        reason: '特效列应贴在最右侧，不要把歌名挤到一半');
 
     // 点开 → 四行浮出，且都在总开关下方
     await tester.tap(chip);

@@ -130,6 +130,28 @@ class ScatterWord {
   /// （'C#4' → 'C#\n4'），否则会读成「C / 井号 / 4」三行，中间那个符号很怪。
   String get text =>
       vertical ? PitchScatterController.verticalTextOf(note) : note;
+
+  /// 预排版好的文本：**落位时建一次，之后每帧只画不排**。
+  ///
+  /// 之前每个字是一个 Text widget + Positioned + Transform + Opacity：
+  /// 清屏（整屏一起落）时每帧要重建 4×N 个 widget，还要为每个字分配一个
+  /// 透明图层 —— 一百多个字就是一百多次 saveLayer，掉帧掉得很明显。
+  /// 改成整层一个 CustomPaint、每字一个缓存的 TextPainter 之后，
+  /// 每帧只是把已经排好的段落按矩阵画出去。
+  TextPainter? _tp;
+
+  TextPainter get painter => _tp ??= (TextPainter(
+        text: TextSpan(
+          text: text,
+          style: PitchScatterController.styleFor(
+            size,
+            color: color,
+            vertical: vertical,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+        maxLines: vertical ? null : 1,
+      )..layout());
 }
 
 class _Rect {
@@ -732,6 +754,11 @@ class PitchScatterController {
 }
 
 /// 显示层：把 [PitchScatterController.words] 画满整屏。
+///
+/// **整层一个 CustomPaint**，每个字用落位时缓存好的 [ScatterWord.painter]：
+/// 逐帧只是按矩阵把排好的段落画出去，不再重建上百个 widget。
+/// 透明度按 8 档分组，每档共用一次 saveLayer —— 清屏（整屏一起落）时
+/// 只会产生 8 个图层，而不是「每个字一个」。
 class PitchScatter extends StatelessWidget {
   const PitchScatter({super.key, required this.controller});
 
@@ -740,56 +767,80 @@ class PitchScatter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (controller.words.isEmpty) return const SizedBox.shrink();
-    final pulse = controller.pulse;
     return IgnorePointer(
-      child: SizedBox.expand(
-        child: Stack(
-          children: [
-            for (final w in controller.words)
-              Positioned(
-                left: w.x,
-                top: w.y,
-                // 显式宽高：不给的话 Text 会按「剩余宽度」自动换行
-                width: w.width,
-                height: w.height,
-                child: _posed(w, pulse: pulse),
-              ),
-          ],
-        ),
+      child: CustomPaint(
+        size: Size.infinite,
+        painter: _ScatterPainter(controller, controller.pulse),
       ),
     );
+  }
+}
+
+class _ScatterPainter extends CustomPainter {
+  _ScatterPainter(this.c, this.pulse);
+
+  final PitchScatterController c;
+  final double pulse;
+
+  /// 透明度分档数：8 档够细，图层数又可控
+  static const int _levels = 8;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final words = c.words;
+    if (words.isEmpty) return;
+
+    // 常态（没有字在淡入淡出）：直接画，一个图层都不开
+    var allOpaque = true;
+    for (final w in words) {
+      if (w.pose.alpha < 0.999) {
+        allOpaque = false;
+        break;
+      }
+    }
+    if (allOpaque) {
+      for (final w in words) {
+        _paintWord(canvas, w);
+      }
+      return;
+    }
+
+    final bounds = Offset.zero & size;
+    for (var level = 0; level < _levels; level++) {
+      final a = (level + 1) / _levels;
+      var opened = false;
+      for (final w in words) {
+        final wa = w.pose.alpha;
+        if (wa <= 0.02) continue;
+        final bucket =
+            ((wa.clamp(0.0, 1.0) * _levels).ceil() - 1).clamp(0, _levels - 1);
+        if (bucket != level) continue;
+        if (!opened) {
+          // 整档共用一个图层：组透明度，比每字一层便宜一个量级
+          canvas.saveLayer(bounds, Paint()..color = Color.fromRGBO(255, 255, 255, a));
+          opened = true;
+        }
+        _paintWord(canvas, w);
+      }
+      if (opened) canvas.restore();
+    }
   }
 
-  /// 把 pose 套到字上：位移 → 旋转 → 缩放 → 透明度
-  Widget _posed(ScatterWord w, {required double pulse}) {
+  /// 位移 → 旋转 → 缩放 → 以字框中心为原点画出去
+  void _paintWord(Canvas canvas, ScatterWord w) {
     final p = w.pose;
-    Widget child = Text(
-      w.text,
-      textAlign: TextAlign.center,
-      style: PitchScatterController.styleFor(
-        w.size,
-        color: w.color,
-        vertical: w.vertical,
-      ),
-    );
-    if (p.alpha < 0.999) {
-      child = Opacity(opacity: p.alpha.clamp(0.0, 1.0), child: child);
-    }
+    final cx = w.x + w.width / 2 + p.dx;
+    final cy = w.y + w.height / 2 + p.dy;
+    canvas.save();
+    canvas.translate(cx, cy);
+    if (p.angle != 0) canvas.rotate(p.angle);
     final sx = p.sx * pulse;
     final sy = p.sy * pulse;
-    if (sx != 1 || sy != 1) {
-      child = Transform(
-        alignment: Alignment.center,
-        transform: Matrix4.diagonal3Values(sx, sy, 1),
-        child: child,
-      );
-    }
-    if (p.angle != 0) {
-      child = Transform.rotate(angle: p.angle, child: child);
-    }
-    if (p.dx != 0 || p.dy != 0) {
-      child = Transform.translate(offset: Offset(p.dx, p.dy), child: child);
-    }
-    return child;
+    if (sx != 1 || sy != 1) canvas.scale(sx, sy);
+    w.painter.paint(canvas, Offset(-w.width / 2, -w.height / 2));
+    canvas.restore();
   }
+
+  @override
+  bool shouldRepaint(_ScatterPainter old) => true;
 }
