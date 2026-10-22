@@ -381,30 +381,26 @@ class _HomePageState extends State<HomePage> {
             child: _npInfo(),
           ),
         ),
-        // 总开关 + 逐特效打勾框（框一律排在这个开关**下面**）
-        Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            MasterToggle(
-              on: app.fxOn,
-              c1: app.c1,
-              c2: app.c2,
-              onChanged: (_) => app.toggleFx(),
-            ),
-            const SizedBox(height: 7),
-            FxChecklist(
-              masterOn: app.fxOn,
-              c1: app.c1,
-              c2: app.c2,
-              onToggle: app.toggleFxItem,
-              items: [
-                FxItem(key: 'cloud', label: '词云', value: app.fxCloud),
-                FxItem(key: 'spectrum', label: '频谱', value: app.fxSpectrum),
-                FxItem(key: 'kick', label: '打光', value: app.fxKick),
-                FxItem(key: 'pitch', label: '音高', value: app.fxPitch),
-              ],
-            ),
+        // 总开关 + 折叠式特效面板：和左边的「打开列表」按钮**同一行同一中线**
+        // （Row 默认 crossAxisAlignment.center）。特效展开是浮层，不撑高这一行，
+        // 所以高度恒定、左右永远对齐。
+        MasterToggle(
+          on: app.fxOn,
+          c1: app.c1,
+          c2: app.c2,
+          onChanged: (_) => app.toggleFx(),
+        ),
+        const SizedBox(width: 8),
+        FxChecklist(
+          masterOn: app.fxOn,
+          c1: app.c1,
+          c2: app.c2,
+          onToggle: app.toggleFxItem,
+          items: [
+            FxItem(key: 'cloud', label: '词云', value: app.fxCloud),
+            FxItem(key: 'spectrum', label: '频谱', value: app.fxSpectrum),
+            FxItem(key: 'kick', label: '打光', value: app.fxKick),
+            FxItem(key: 'pitch', label: '音高', value: app.fxPitch),
           ],
         ),
       ],

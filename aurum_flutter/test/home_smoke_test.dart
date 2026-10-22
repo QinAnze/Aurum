@@ -117,14 +117,33 @@ void main() {
     app.dispose();
   });
 
-  testWidgets('逐特效打勾框：排在总开关下面，各自独立', (tester) async {
+  testWidgets('逐特效开关：默认收起，点开才浮出四行，各自独立', (tester) async {
     final app = AppState(engine: _StubEngine(), autoStart: false);
     await tester.pumpWidget(AurumApp(app: app));
     await tester.runAsync(
         () async => await Future.delayed(const Duration(milliseconds: 500)));
     await tester.pump();
 
-    // 四个框都在，且总开关之下（y 坐标更大）
+    // 收起态：只剩一枚胶囊，四行标签不在树里
+    final chip = find.byKey(const ValueKey('fx-chip'));
+    expect(chip, findsOneWidget);
+    for (final label in ['词云', '频谱', '打光', '音高']) {
+      expect(find.text(label), findsNothing, reason: '收起时不该占位');
+    }
+
+    // 胶囊与总开关同一行、同一中线（用户要求「处于同一高度」）
+    final toggleRect = tester.getRect(find.text('ON'));
+    final chipRect = tester.getRect(chip);
+    expect(
+      (chipRect.center.dy - toggleRect.center.dy).abs(),
+      lessThan(2),
+      reason: '特效胶囊要和总开关同一中线',
+    );
+
+    // 点开 → 四行浮出，且都在总开关下方
+    await tester.tap(chip);
+    // viz 的 ticker 常驻，pumpAndSettle 会一直等下去，用定长 pump
+    await tester.pump(const Duration(milliseconds: 260));
     for (final label in ['词云', '频谱', '打光', '音高']) {
       expect(find.text(label), findsOneWidget);
     }
@@ -142,10 +161,20 @@ void main() {
     expect(app.fxItemOn('kick'), isFalse);
     expect(app.fxItemOn('cloud'), isTrue);
 
-    // 总开关关掉 → 所有特效实测都关；再点一次单项会顺手把总开关打开
+    // 点空白处收起（展开时浮层的遮罩会挡住总开关，得先收）
+    await tester.tapAt(const Offset(6, 6));
+    await tester.pump(const Duration(milliseconds: 260));
+    expect(find.text('词云'), findsNothing, reason: '点外部应收起');
+
+    // 总开关关掉 → 所有特效实测都关
     await tester.tap(find.text('ON'));
     await tester.pump();
+    expect(app.fxOn, isFalse);
     expect(app.fxItemOn('cloud'), isFalse);
+
+    // 再展开点单个 → 会顺手把总开关打开
+    await tester.tap(chip);
+    await tester.pump(const Duration(milliseconds: 260));
     await tester.tap(find.byKey(const ValueKey('fx-check-cloud')));
     await tester.pump();
     expect(app.fxOn, isTrue);
