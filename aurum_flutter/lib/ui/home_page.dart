@@ -468,6 +468,8 @@ class _HomePageState extends State<HomePage> {
               c1: app.c1,
               c2: app.c2,
               onToggle: app.toggleFxItem,
+              mixedSource: app.searchMixed,
+              onSourceChanged: app.setSearchMixed,
               items: [
                 FxItem(key: 'cloud', label: '词云', value: app.fxCloud),
                 FxItem(key: 'spectrum', label: '频谱', value: app.fxSpectrum),

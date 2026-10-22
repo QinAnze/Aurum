@@ -102,6 +102,19 @@ class AppState extends ChangeNotifier {
   /// 声像颗粒（立体声宽度扩散）
   bool fxImager = true;
 
+  /* ---------------- 检索源 ---------------- */
+  /// false = **仅 GDStudio**（更稳，封面与歌词齐）；
+  /// true = **混合检索**（网易直连 + 本地 sidecar + 镜像一起竞速，
+  /// 起播更快，但直连回来的结果偶发缺封面/歌词）。
+  bool searchMixed = false;
+
+  /// 切换检索源（同时喂给数据层那个 notifier）
+  void setSearchMixed(bool v) {
+    searchMixed = v;
+    mixedSourceOn.value = v;
+    _notify();
+  }
+
   /* ---------------- 主题色（封面取色） ---------------- */
   Color c1 = const Color(0xFFC9A06A); // 默认：香槟金
   Color c2 = const Color(0xFF7FA693); // 默认：灰绿

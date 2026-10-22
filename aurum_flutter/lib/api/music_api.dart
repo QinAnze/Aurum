@@ -158,11 +158,15 @@ Future<void> _fillNeteasePics(List<Track> list) async {
 /// 搜索：**所有源同时开跑，谁先给出非空结果就用谁**。
 ///
 /// 以前是串行：本地 → 直连 → 镜像 → 酷我，前一个慢/挂就全等着。
-/// 现在四路并发，最快的那个决定结果（通常仍是网易直连，0.3~0.5s）。
+/// 现在并发，最快的那个决定结果。
+///
+/// 参与哪些源由 [mixedSourceOn] 决定：
+///  - 混合：本地 sidecar + 网易直连 + 镜像（快，但直连结果偶发缺封面/歌词）
+///  - 仅 GDStudio：只跑镜像（稳，封面与歌词齐）
 Future<List<Track>> searchTracks(String keyword) async {
   final sources = <Future<List<Track>>>[
     if (localApiOn.value) _searchLocal(keyword),
-    _searchNeteaseDirect(keyword),
+    if (mixedSourceOn.value) _searchNeteaseDirect(keyword),
     _searchGd(keyword, 'netease'),
     _searchGd(keyword, 'kuwo'),
   ];

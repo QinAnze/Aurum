@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:aurum/audio/player_engine.dart';
 import 'package:aurum/effects/pitch_scatter.dart';
 import 'package:aurum/main.dart';
+import 'package:aurum/models.dart';
 import 'package:aurum/state/app_state.dart';
 import 'package:aurum/widgets/glass.dart';
 import 'package:flutter/material.dart';
@@ -181,6 +182,44 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('fx-check-cloud')));
     await tester.pump();
     expect(app.fxOn, isTrue);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    app.dispose();
+  });
+
+  testWidgets('检索源：可在「仅 GDStudio / 混合检索」之间切换', (tester) async {
+    final app = AppState(engine: _StubEngine(), autoStart: false);
+    await tester.pumpWidget(AurumApp(app: app));
+    await tester.runAsync(
+        () async => await Future.delayed(const Duration(milliseconds: 500)));
+    await tester.pump();
+
+    // 默认：仅 GDStudio（用户说它更稳）
+    expect(app.searchMixed, isFalse);
+    expect(mixedSourceOn.value, isFalse);
+
+    final chip = find.byKey(const ValueKey('fx-chip'));
+    await tester.tap(chip);
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('检索源'), findsOneWidget);
+    expect(find.text('仅 GDStudio'), findsOneWidget);
+    expect(find.text('混合检索'), findsOneWidget);
+
+    // 切到混合检索：UI 与数据层的开关都要跟着动
+    await tester.tap(find.byKey(const ValueKey('fx-source-mixed')));
+    await tester.pump();
+    expect(app.searchMixed, isTrue);
+    expect(mixedSourceOn.value, isTrue);
+    expect(find.byKey(const ValueKey('fx-panel')), findsOneWidget,
+        reason: '点了源之后面板不该被收起');
+
+    // 再切回仅 GDStudio
+    await tester.tap(find.byKey(const ValueKey('fx-source-gd')));
+    await tester.pump();
+    expect(app.searchMixed, isFalse);
+    expect(mixedSourceOn.value, isFalse);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();

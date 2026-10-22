@@ -34,6 +34,8 @@ class FxChecklist extends StatefulWidget {
     required this.items,
     required this.masterOn,
     required this.onToggle,
+    required this.mixedSource,
+    required this.onSourceChanged,
     this.c1 = kDefaultC1,
     this.c2 = kDefaultC2,
     this.initiallyOpen = false,
@@ -43,6 +45,9 @@ class FxChecklist extends StatefulWidget {
   /// 总开关状态：关着时整块降透明度（仍可点）
   final bool masterOn;
   final ValueChanged<String> onToggle;
+  /// 检索源：true = 混合检索，false = 仅 GDStudio
+  final bool mixedSource;
+  final ValueChanged<bool> onSourceChanged;
   final Color c1;
   final Color c2;
   /// 首帧是否展开（测试/调试用，正常是收起的）
@@ -192,7 +197,7 @@ class _FxChecklistState extends State<FxChecklist> {
     );
   }
 
-  static const double _kPanelW = 104;
+  static const double _kPanelW = 116;
 
   Widget _panel() {
     return AnimatedOpacity(
@@ -231,6 +236,40 @@ class _FxChecklistState extends State<FxChecklist> {
                 onTap: () => widget.onToggle(widget.items[i].key),
               ),
             ],
+            const SizedBox(height: 7),
+            Container(
+              height: 1,
+              color: const Color(0x1CFFFFFF),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '检索源',
+              style: fontStyle(
+                size: 10.5,
+                weight: FontWeight.w600,
+                color: kTextFaint,
+              ),
+            ),
+            const SizedBox(height: 5),
+            _SourcePill(
+              key: const ValueKey('fx-source-gd'),
+              label: '仅 GDStudio',
+              hint: '稳，封面歌词齐',
+              selected: !widget.mixedSource,
+              c1: widget.c1,
+              c2: widget.c2,
+              onTap: () => widget.onSourceChanged(false),
+            ),
+            const SizedBox(height: 4),
+            _SourcePill(
+              key: const ValueKey('fx-source-mixed'),
+              label: '混合检索',
+              hint: '快，偶发缺图',
+              selected: widget.mixedSource,
+              c1: widget.c1,
+              c2: widget.c2,
+              onTap: () => widget.onSourceChanged(true),
+            ),
           ],
         ),
       ),
@@ -252,30 +291,132 @@ class _DropIn extends StatefulWidget {
   State<_DropIn> createState() => _DropInState();
 }
 
-class _DropInState extends State<_DropIn> {
-  bool _in = false;
+class _DropInState extends State<_DropIn> with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 150),
+  );
+  late final Animation<double> _t = CurvedAnimation(parent: _c, curve: kEaseOut);
 
   @override
   void initState() {
     super.initState();
-    // 用隐式动画（AnimatedOpacity/AnimatedSlide）而不是 AnimationController：
-    // 控制器在 overlay 重建时容易被重置到 0，面板就永远全透明。
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) setState(() => _in = true);
-    });
+    _c.forward();
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedOpacity(
-      opacity: _in ? 1 : 0,
-      duration: const Duration(milliseconds: 150),
-      curve: kEaseOut,
-      child: AnimatedSlide(
-        offset: Offset(0, _in ? 0 : -0.06),
-        duration: const Duration(milliseconds: 150),
+    return AnimatedBuilder(
+      animation: _t,
+      builder: (_, child) => Opacity(
+        opacity: _t.value.clamp(0.0, 1.0),
+        child: Transform.translate(
+          // 固定 8px，不要用 AnimatedSlide 的比例位移：
+          // 面板越高偏移越大（加了检索源那两行之后偏差到 16px），
+          // 画出来的位置和布局位置对不上，点击就会打空。
+          offset: Offset(0, (1 - _t.value) * -8),
+          child: child,
+        ),
+      ),
+      child: widget.child,
+    );
+  }
+}
+
+/// 检索源的一枚选项（单选）：选中时描边 + 渐变底 + 亮字。
+class _SourcePill extends StatefulWidget {
+  const _SourcePill({
+    super.key,
+    required this.label,
+    required this.hint,
+    required this.selected,
+    required this.onTap,
+    required this.c1,
+    required this.c2,
+  });
+
+  final String label;
+  final String hint;
+  final bool selected;
+  final VoidCallback onTap;
+  final Color c1;
+  final Color c2;
+
+  @override
+  State<_SourcePill> createState() => _SourcePillState();
+}
+
+class _SourcePillState extends State<_SourcePill> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final on = widget.selected;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) => setState(() => _pressed = false),
+      onTapCancel: () => setState(() => _pressed = false),
+      onTap: widget.onTap,
+      child: AnimatedScale(
+        scale: _pressed ? kPressScale : 1,
+        duration: const Duration(milliseconds: 110),
         curve: kEaseOut,
-        child: widget.child,
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            curve: kEaseOut,
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(7, 5, 7, 5),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: on ? const Color(0x00000000) : const Color(0x1FFFFFFF),
+              ),
+              gradient: on
+                  ? LinearGradient(
+                      colors: [
+                        widget.c1.withValues(alpha: 0.85),
+                        widget.c2.withValues(alpha: 0.85),
+                      ],
+                    )
+                  : null,
+              color: on ? null : const Color(0x0AFFFFFF),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  widget.label,
+                  style: fontStyle(
+                    size: 11,
+                    weight: FontWeight.w600,
+                    color: on ? const Color(0xF2070A12) : kTextDim,
+                  ),
+                ),
+                const SizedBox(height: 1),
+                Text(
+                  widget.hint,
+                  style: fontStyle(
+                    size: 9,
+                    weight: FontWeight.w400,
+                    color: on
+                        ? const Color(0xB2070A12)
+                        : kTextFaint.withValues(alpha: 0.75),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

@@ -26,6 +26,10 @@ const List<String> kLocalLevels = ['exhigh', 'standard', 'lossless']; // 本地�
 /// 本地 NCMApi 探测结果（原版 localApiOn）
 final ValueNotifier<bool> localApiOn = ValueNotifier<bool>(false);
 
+/// 检索源：**true = 混合检索**（本地 sidecar + 网易直连 + 镜像一起竞速），
+/// **false = 仅 GDStudio 镜像**（更稳：直连回来的结果偶发缺封面/歌词）。
+final ValueNotifier<bool> mixedSourceOn = ValueNotifier<bool>(false);
+
 /* ---------------- 音轨 ---------------- */
 class Track {
   Track({
