@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _rect = Rect.fromLTWH(100, 100, 300, 300);
+/// 落位点相对封面圆心的上移量：字号 = 0.22 边长，再上移 0.52 字高
+const double _lift = 300 * 0.22 * 0.52;
 const _c1 = Color(0xFFC9A06A);
 
 Widget _host(String? note,
@@ -67,7 +69,7 @@ void main() {
     expect(hotScale, closeTo(1.35, 0.02), reason: '高潮时字要变大');
   });
 
-  testWidgets('进场：从下方升到封面中央', (tester) async {
+  testWidgets('进场：从下方升到圆心偏上（让位给直线频谱）', (tester) async {
     await tester.pumpWidget(_host('E5'));
     await tester.pump(const Duration(milliseconds: 60));
     final early = tester.getCenter(find.text('E5')).dy;
@@ -76,19 +78,22 @@ void main() {
     final settled = tester.getCenter(find.text('E5')).dy;
 
     expect(early, greaterThan(settled), reason: '升起过程中应当更靠下');
-    // 落位后应当在封面矩形中心附近
-    expect((settled - _rect.center.dy).abs(), lessThan(2));
+    // 落位点在圆心上方半个字高，且仍在封面圆内
+    final expectY = _rect.center.dy - _lift;
+    expect((settled - expectY).abs(), lessThan(2));
+    expect(settled, lessThan(_rect.center.dy), reason: '必须高于圆心');
   });
 
   testWidgets('note 变 null：先向下落，动画结束才移除', (tester) async {
     await tester.pumpWidget(_host('E5'));
     await tester.pump(const Duration(milliseconds: 600));
+    final settled = tester.getCenter(find.text('E5')).dy;
 
     await tester.pumpWidget(_host(null));
     await tester.pump(const Duration(milliseconds: 120));
     expect(find.text('E5'), findsOneWidget, reason: '坠落过程还在屏幕上');
     final falling = tester.getCenter(find.text('E5')).dy;
-    expect(falling, greaterThan(_rect.center.dy));
+    expect(falling, greaterThan(settled), reason: '要往下掉');
 
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('E5'), findsNothing);

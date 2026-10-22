@@ -1,4 +1,4 @@
-// 相位调度回归：歌词段测人声 / >8s 的纯乐器段测乐器 / 无歌词靠响度段。
+// 相位调度回归：歌词段测人声 / >5s 的纯乐器段测乐器 / 无歌词靠响度段。
 import 'package:aurum/effects/pitch_detector.dart';
 import 'package:aurum/models.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -40,7 +40,7 @@ void main() {
     expect(phase, PitchPhase.vocal);
   });
 
-  test('间隔 >8s 且人声停了 1.2s：切成乐器', () {
+  test('间隔 >5s 且人声停了 1.2s：切成乐器', () {
     final w = PitchWindow();
     final lines = _lines([0, 20]);
     // 前 1.5s 还在唱
@@ -52,7 +52,7 @@ void main() {
         PitchPhase.instrument);
   });
 
-  test('间隔不足 8s：一直是人声，不会切乐器', () {
+  test('间隔不足 5s（正好 5s 也不算）：一直是人声，不会切乐器', () {
     final w = PitchWindow();
     final lines = _lines([0, 5]);
     expect(_run(w, lines, from: 0, to: 1, heardUntil: 1), PitchPhase.vocal);
@@ -107,23 +107,23 @@ void main() {
     expect(w.phase, PitchPhase.off);
   });
 
-  /* ---------------- 超长句：句内 >8s 转散落 ---------------- */
+  /* ---------------- 超长句：句内 >5s 转散落 ---------------- */
 
-  test('超长句：前 8s 仍是人声，之后转乐器（即使一直测到音）', () {
+  test('超长句：前 5s 仍是人声，之后转乐器（即使一直测到音）', () {
     final w = PitchWindow();
-    // 一句唱 14s，下一句在 14s：人声全程都在，但本句自己超过 8s
+    // 一句唱 14s，下一句在 14s：人声全程都在，但本句自己超过 5s
     final lines = _lines([0, 14]);
-    expect(_run(w, lines, from: 0, to: 7.8, heardUntil: 999),
+    expect(_run(w, lines, from: 0, to: 4.8, heardUntil: 999),
         PitchPhase.vocal);
-    expect(_run(w, lines, from: 7.8, to: 8.4, heardUntil: 999),
+    expect(_run(w, lines, from: 4.8, to: 5.4, heardUntil: 999),
         PitchPhase.instrument);
   });
 
   test('超长句：切到乐器后一直保持到本句结束，不是闪一下就回去', () {
     final w = PitchWindow();
     final lines = _lines([0, 14]);
-    _run(w, lines, from: 0, to: 8.4, heardUntil: 999);
-    expect(_run(w, lines, from: 8.4, to: 13.6, heardUntil: 999),
+    _run(w, lines, from: 0, to: 5.4, heardUntil: 999);
+    expect(_run(w, lines, from: 5.4, to: 13.6, heardUntil: 999),
         PitchPhase.instrument);
   });
 
@@ -136,11 +136,11 @@ void main() {
         PitchPhase.vocal);
   });
 
-  test('普通句（<8s）不会因为句内就走满 8s 而切走', () {
+  test('普通句（<5s）不会因为句内就走满 5s 而切走', () {
     final w = PitchWindow();
-    // 句长 6s：全程人声
-    final lines = _lines([0, 6, 12]);
-    expect(_run(w, lines, from: 0, to: 5.9, heardUntil: 999),
+    // 句长 4s：全程人声
+    final lines = _lines([0, 4, 8]);
+    expect(_run(w, lines, from: 0, to: 3.9, heardUntil: 999),
         PitchPhase.vocal);
   });
 }

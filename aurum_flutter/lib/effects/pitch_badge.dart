@@ -126,7 +126,8 @@ class _PitchBadgeState extends State<PitchBadge>
       return const SizedBox.shrink();
     }
 
-    final size = rect.width * 0.2; // 字号跟封面走
+    // 字号跟封面走。像素字笔画细，比之前的衬线调大一档才压得住
+    final size = rect.width * 0.22;
     return IgnorePointer(
       child: Stack(
         children: [
@@ -139,7 +140,10 @@ class _PitchBadgeState extends State<PitchBadge>
                   final v = _c.value.clamp(0.0, 1.0);
                   // 与词云 rise/fall 同一条曲线：减速上升、加速坠落
                   final rise = 1 - (1 - v) * (1 - v);
-                  final dy = (1 - rise) * size * 1.25 * _rise;
+                  // 上移半个字高：把封面圆心让给下方的直线频谱，
+                  // 上移量 0.52*字号，字顶仍在圆内（0.52+0.5=1.02 字高 ≈ 0.22 封面宽）
+                  final dy =
+                      (1 - rise) * size * 1.25 * _rise - size * 0.52;
                   final alpha = _leaving
                       ? (1 - math.pow(1 - v, 2.2) as double)
                       : math.min(1.0, v * 2.2);
@@ -159,13 +163,13 @@ class _PitchBadgeState extends State<PitchBadge>
                       size * (0.26 + 0.52 * math.pow(1 - v, 3)) * boost;
                   final aura = b * 1.8;
                   final style = TextStyle(
-                    // 歌词段的音高字母用衬线体（与背景平铺的像素字区分开）
+                    // 与背景平铺统一成像素体（用户要求）。像素字只有一个字重，
+                    // 传 fontWeight 会被引擎合成假粗体、把像素边糊掉。
                     inherit: false,
-                    fontFamily: 'AurumSerif',
-                    fontWeight: FontWeight.w600,
+                    fontFamily: 'AurumPixel',
                     fontSize: size,
                     height: 1.0,
-                    letterSpacing: -0.01 * size,
+                    letterSpacing: 0,
                     color: Colors.white.withValues(alpha: 0.96 * alpha),
                     shadows: [
                       // 贴字一层（半径 ≈ 半个字高），先把字的边缘烧亮

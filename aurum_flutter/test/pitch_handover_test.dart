@@ -1,4 +1,4 @@
-// 相位交接：歌词段 → 无歌词段（含超长句唱过 8s）时，
+// 相位交接：歌词段 → 无歌词段（含超长句唱过 5s）时，
 // 中心音高与背景词云先落下去，平铺音高延后出场，三者不并存。
 import 'dart:async';
 import 'dart:math' as math;
@@ -15,6 +15,7 @@ import 'package:flutter_test/flutter_test.dart';
 /// 位置可变、波形是 440Hz 正弦的假引擎
 class _Engine implements PlayerEngine {
   double pos = 0;
+  bool playing = true;
   late final Float32List _wave = Float32List.fromList([
     for (var i = 0; i < 2048; i++)
       0.25 * math.sin(2 * math.pi * 440 * i / 44100),
@@ -27,7 +28,7 @@ class _Engine implements PlayerEngine {
   @override
   Float32List? get wave => _wave;
   @override
-  bool get isPlaying => true;
+  bool get isPlaying => playing;
   @override
   bool get hasSource => true;
   @override
@@ -52,9 +53,10 @@ class _Engine implements PlayerEngine {
   void dispose() {}
 }
 
-VizController _build(_Engine e) => VizController(
+VizController _build(_Engine e, {bool Function()? isPlaying}) {
+  final viz = VizController(
       engine: e,
-      isPlaying: () => true,
+      isPlaying: isPlaying ?? () => true,
       volume: () => 1,
       fxOn: () => true,
       lyrics: () => [
@@ -63,11 +65,36 @@ VizController _build(_Engine e) => VizController(
       ],
       cloudColorsFn: () => const [],
       cloud: WordCloudController(),
-    );
+  );
+  return viz;
+}
 
 void main() {
-  testWidgets('8s 一到：中心音高让位，平铺延后，两者不同框', (tester) async {
-    final e = _Engine()..pos = 7.0;
+  testWidgets('暂停时音高显示整体收起，不冻在最后一帧', (tester) async {
+    var uiPlaying = true;
+    final e = _Engine()..pos = 0.2;
+    final viz = _build(e, isPlaying: () => uiPlaying);
+    viz.setCanvasSize(const Size(1280, 800));
+    viz.start();
+
+    for (var i = 0; i < 30; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(viz.pitchLive, isTrue);
+    expect(viz.pitchNote, isNotNull, reason: '440Hz 正弦应当锁到音名');
+
+    // 暂停（UI 状态与引擎都要停：playing 取两者的或）
+    uiPlaying = false;
+    e.playing = false;
+    await tester.pump(const Duration(milliseconds: 16));
+
+    expect(viz.pitchLive, isFalse);
+    expect(viz.pitchNote, isNull, reason: '暂停后中央字母要收起来');
+    viz.dispose(); // 必须在用例体内停掉 ticker，否则下一个用例会报残留动画
+  });
+
+  testWidgets('5s 一到：中心音高让位，平铺延后，两者不同框', (tester) async {
+    final e = _Engine()..pos = 4.0;
     final viz = _build(e);
     // 测试里没有 UI 树，画布尺寸要手动喂（真实运行时由词云层的 LayoutBuilder 回填）
     viz.setCanvasSize(const Size(1280, 800));
@@ -80,8 +107,8 @@ void main() {
     expect(viz.window.phase, PitchPhase.vocal);
     expect(viz.scatter.words, isEmpty);
 
-    // 越过 8s → 切到无歌词段
-    e.pos = 8.1;
+    // 越过 5s → 切到无歌词段
+    e.pos = 5.1;
     await tester.pump(const Duration(milliseconds: 16));
     expect(viz.window.phase, PitchPhase.instrument);
     expect(viz.pitchNote, isNull, reason: '中心音高立刻让位，不该还挂着');
@@ -131,7 +158,7 @@ void main() {
     }
     final before = viz.cloud.words.length;
 
-    e.pos = 8.1;
+    e.pos = 5.1;
     await tester.pump(const Duration(milliseconds: 16));
 
     // 词云里的词应当全部进入坠落（或已经落完）

@@ -48,7 +48,7 @@ enum PitchPhase { off, vocal, instrument }
 ({double start, double end, int index})? longGapAt(
   List<LyricLine> lines,
   double pos, {
-  double minGap = 8,
+  double minGap = 5,
 }) {
   for (var i = 0; i < lines.length - 1; i++) {
     final a = lines[i].t;
@@ -656,7 +656,7 @@ class _Guess {
 ///    走乐器模式。
 ///  - 第一句歌词之前（前奏）按无歌词处理。
 class PitchWindow {
-  PitchWindow({this.minGap = 8, this.silenceSec = 1.2});
+  PitchWindow({this.minGap = 5, this.silenceSec = 1.2});
 
   /// 长间隙阈值（秒）：两句歌词间隔超过它才可能是纯乐器段
   final double minGap;

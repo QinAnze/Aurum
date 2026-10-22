@@ -8,6 +8,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../effects/edge_light.dart';
+import '../effects/imager_field.dart';
+import '../effects/linear_spectrum.dart';
 import '../effects/pitch_badge.dart';
 import '../effects/pitch_scatter.dart';
 import '../effects/viz_controller.dart';
@@ -59,6 +61,7 @@ class _HomePageState extends State<HomePage> {
       fxSpectrum: () => widget.app.fxSpectrum,
       fxKick: () => widget.app.fxKick,
       fxPitch: () => widget.app.fxPitch,
+      fxImager: () => widget.app.fxImager,
       lyrics: () => widget.app.lyrics,
       cloudColorsFn: () => cloudColors(widget.app.palette ?? const []),
       coverPaletteFn: () => widget.app.palette ?? const [],
@@ -152,6 +155,8 @@ class _HomePageState extends State<HomePage> {
                     flip: app.bgFlip,
                   ),
                 ),
+                // 声像颗粒：整个界面最底层的特效（背景之上、其它一切之下）
+                _imagerLayer(),
                 // 音高散落（乐器段）：铺在**背景层之上**、UI 之下 ——
                 // 用户要的是「铺在背景上」，不是浮在面板前面的顶层贴纸。
                 if (app.fxItemOn('pitch')) _pitchScatter(),
@@ -180,6 +185,8 @@ class _HomePageState extends State<HomePage> {
                 ],
                 // kick 打光：整窗四周的光圈（在面板之上、抽屉/Toast 之下）
                 if (app.fxItemOn('kick')) _edgeLight(),
+                // 封面内下方的直线频谱（与环形同一份数据）
+                if (app.fxItemOn('spectrum')) _linearSpectrum(),
                 // 音高：人声段是封面中央的字母（顶层），乐器段散落已在背景层
                 if (app.fxItemOn('pitch')) _pitchBadge(),
                 // Toast
@@ -249,7 +256,14 @@ class _HomePageState extends State<HomePage> {
     return Positioned.fill(
       child: AnimatedBuilder(
         animation: _viz,
-        builder: (_, __) => PitchScatter(controller: _viz.scatter),
+        // 不播放就淡出：平铺字的数据停在最后一帧，留着像画面卡死。
+        // 透明度 0 时 Flutter 直接跳过子树绘制，不额外产生图层开销。
+        builder: (_, __) => AnimatedOpacity(
+          opacity: _viz.pitchLive ? 1 : 0,
+          duration: const Duration(milliseconds: 240),
+          curve: Curves.easeOut,
+          child: PitchScatter(controller: _viz.scatter),
+        ),
       ),
     );
   }
@@ -269,6 +283,57 @@ class _HomePageState extends State<HomePage> {
           blur: _viz.pitchBlur,
           scale: _viz.pitchScale,
         ),
+      ),
+    );
+  }
+
+  /// 声像颗粒层：最底层，只在背景没被面板盖住的地方露出来
+  Widget _imagerLayer() {
+    if (!widget.app.fxItemOn('imager')) return const SizedBox.shrink();
+    return Positioned.fill(
+      child: AnimatedBuilder(
+        animation: _viz,
+        builder: (_, __) => ImagerField(controller: _viz.imagerField),
+      ),
+    );
+  }
+
+  /// 封面圆内的直线频谱：左低频右高频，宽度收在弦长以内
+  Widget _linearSpectrum() {
+    return Positioned.fill(
+      child: AnimatedBuilder(
+        animation: _viz,
+        builder: (_, __) {
+          final r = _viz.coverRect;
+          if (r == null || r.isEmpty) return const SizedBox.shrink();
+          // 宽度 0.62 直径 → 半宽 0.31w；整条落在 0.60h~0.82h，
+          // 端点距圆心 √(0.31² + 0.32²) w ≈ 0.45w = 0.89r < r，仍整条在圆内。
+          // 画布给高一点，曲线才有足够的纵向行程（用户要「最大高度更高」）。
+          return Stack(
+            children: [
+              Positioned(
+                left: r.left + r.width * 0.19,
+                top: r.top + r.height * 0.60,
+                width: r.width * 0.62,
+                height: r.height * 0.22,
+                // 不播放时淡出：暂停后 specVals 会冻在最后一帧，
+                // 留在封面上会像「卡住的线」
+                child: AnimatedOpacity(
+                  opacity: _viz.specLive ? 1 : 0,
+                  duration: const Duration(milliseconds: 260),
+                  curve: Curves.easeOut,
+                  child: CustomPaint(
+                    painter: LinearSpectrumPainter(
+                      vals: _viz.specVals,
+                      climax: _viz.climax,
+                      oc: true,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -401,6 +466,7 @@ class _HomePageState extends State<HomePage> {
             FxItem(key: 'spectrum', label: '频谱', value: app.fxSpectrum),
             FxItem(key: 'kick', label: '打光', value: app.fxKick),
             FxItem(key: 'pitch', label: '音高', value: app.fxPitch),
+            FxItem(key: 'imager', label: '声像', value: app.fxImager),
           ],
         ),
       ],

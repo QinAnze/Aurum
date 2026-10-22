@@ -99,6 +99,8 @@ class AppState extends ChangeNotifier {
   bool fxKick = true;
   /// 音高字母（人声段居中 / 乐器段底部散落）
   bool fxPitch = true;
+  /// 声像颗粒（立体声宽度扩散）
+  bool fxImager = true;
 
   /* ---------------- 主题色（封面取色） ---------------- */
   Color c1 = const Color(0xFFC9A06A); // 默认：香槟金
@@ -485,6 +487,8 @@ class AppState extends ChangeNotifier {
         fxKick = !fxKick;
       case 'pitch':
         fxPitch = !fxPitch;
+      case 'imager':
+        fxImager = !fxImager;
       default:
         return;
     }
@@ -498,6 +502,7 @@ class AppState extends ChangeNotifier {
         'spectrum' => fxSpectrum,
         'kick' => fxKick,
         'pitch' => fxPitch,
+        'imager' => fxImager,
         _ => false,
       };
 

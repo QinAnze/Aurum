@@ -253,10 +253,10 @@ void main() {
     expect(longGapAt(lines, 20), isNull);
   });
 
-  test('阈值是 8s：整 8s 不算，8.5s 算', () {
-    final a = [LyricLine(t: 0, text: 'a'), LyricLine(t: 8, text: 'b')];
+  test('阈值是 5s：整 5s 不算，5.5s 算', () {
+    final a = [LyricLine(t: 0, text: 'a'), LyricLine(t: 5, text: 'b')];
     expect(longGapAt(a, 4), isNull);
-    final b = [LyricLine(t: 0, text: 'a'), LyricLine(t: 8.5, text: 'b')];
+    final b = [LyricLine(t: 0, text: 'a'), LyricLine(t: 5.5, text: 'b')];
     expect(longGapAt(b, 4), isNotNull);
   });
 

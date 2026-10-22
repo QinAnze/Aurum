@@ -15,6 +15,8 @@ import 'package:flutter/scheduler.dart';
 
 import '../../audio/player_engine.dart';
 import '../../models.dart';
+import 'imager_detector.dart';
+import 'imager_field.dart';
 import 'kick_detector.dart';
 import 'pitch_detector.dart';
 import 'pitch_scatter.dart';
@@ -35,6 +37,7 @@ class VizController extends ChangeNotifier implements TickerProvider {
     this.fxSpectrum,
     this.fxKick,
     this.fxPitch,
+    this.fxImager,
   });
 
   final PlayerEngine engine;
@@ -45,6 +48,26 @@ class VizController extends ChangeNotifier implements TickerProvider {
   final List<LyricLine> Function() lyrics;
   final List<Color> Function() cloudColorsFn;
   final WordCloudController cloud;
+
+  /// 声像（立体声宽度）检测
+  final ImagerDetector imager = ImagerDetector();
+  /// 声像颗粒场（最底层粒子）
+  final ImagerFieldController imagerField = ImagerFieldController();
+
+  /// 当前声像宽度 0..1
+  double get imagerWidth => imager.width;
+
+  /// 频谱此刻是否该显示。暂停 / 停止时置 false —— 直线频谱会淡出，
+  /// 不会把暂停那一帧的旧值冻在封面上。
+  bool specLive = false;
+
+  /// 当前是否在播放。**暂停时所有"实时数据"特效都要收起来**
+  /// （中央音高字母、背景平铺音高、直线频谱）：它们的数据停在最后一帧，
+  /// 留着会像画面卡死。
+  bool live = false;
+
+  /// 音高显示是否该露出来（在播 + 开关打开）
+  bool get pitchLive => live;
 
   /// 封面原始取色板（未提亮、未掺色）。音高散落字的颜色直接取自这里；
   /// 不传则退回 [cloudColorsFn]。
@@ -59,6 +82,7 @@ class VizController extends ChangeNotifier implements TickerProvider {
   final bool Function()? fxSpectrum;
   final bool Function()? fxKick;
   final bool Function()? fxPitch;
+  final bool Function()? fxImager;
 
   /// 词云是否该跑
   bool cloudEnabled() => fxOn() && (fxCloud?.call() ?? true);
@@ -68,6 +92,8 @@ class VizController extends ChangeNotifier implements TickerProvider {
   bool kickEnabled() => fxOn() && (fxKick?.call() ?? true);
   /// 音高检测 + 字母是否该跑
   bool pitchEnabled() => fxOn() && (fxPitch?.call() ?? true);
+  /// 声像颗粒是否该跑
+  bool imagerEnabled() => fxOn() && (fxImager?.call() ?? true);
 
   /* ---------------- 对外暴露的逐帧状态 ---------------- */
   double climax = 0;
@@ -115,6 +141,54 @@ class VizController extends ChangeNotifier implements TickerProvider {
   /// 频谱峰值（自适应标度用）+ 取数缓冲区
   double _specPeak = 0;
   final Float64List _magBuf = Float64List(kSpecN);
+
+  /* ---------------- 频谱频段划分 ---------------- */
+
+  /// 频谱显示范围（Hz）。10Hz 以下多是直流/隆隆声，21000 已覆盖
+  /// 44.1k 采样的整个可听带（奈奎斯特 22050，留 1k 余量）。
+  static const double specLowHz = 10;
+  static const double specHighHz = 21000;
+
+  /// 采样率：flutter_soloud 默认输出 44.1k
+  static const double _kSampleRate = 44100;
+
+  /// 每个显示点对应的 FFT bin（按 fft 长度缓存）
+  Int32List? _specBins;
+  int _specBinN = -1;
+
+  /// 频段划分的指数。**< 1 就是「低频粗、高频细」**：
+  /// u = t^0.62 在开头涨得快 → 前 1/4 个点跨掉 4~5 个八度（低频每点一大片），
+  /// 后 1/4 只跨 2 个八度（高频每点一小段）。
+  /// 若用 1.0（标准对数谱）低频反而最细，与这里的观感诉求相反。
+  static const double _kBandSkew = 0.62;
+
+  @visibleForTesting
+  static Int32List buildSpecBins(int fftLen) {
+    final bins = Int32List(kSpecN);
+    // fft 给的是 0..奈奎斯特的 magnitude，bin 宽 = 采样率/2/fftLen
+    final binHz = (_kSampleRate / 2) / fftLen;
+    final span = specHighHz / specLowHz;
+    for (var i = 0; i < kSpecN; i++) {
+      final t = i / (kSpecN - 1);
+      final hz = specLowHz * math.pow(span, math.pow(t, _kBandSkew));
+      bins[i] = (hz / binHz).round().clamp(0, fftLen - 1);
+    }
+    return bins;
+  }
+
+  /// 上升 / 回落系数：低频慢（0.30 / 0.08），高频快（0.92 / 0.34）。
+  /// 低频拖住能量看起来"够厚"，高频跟手才看得见细节。
+  static final Float64List _specAtk = _buildBandTau(0.30, 0.92);
+  static final Float64List _specRel = _buildBandTau(0.08, 0.34);
+
+  static Float64List _buildBandTau(double low, double high) {
+    final out = Float64List(kSpecN);
+    for (var i = 0; i < kSpecN; i++) {
+      final t = i / (kSpecN - 1);
+      out[i] = (low + (high - low) * math.pow(t, 0.75)).toDouble();
+    }
+    return out;
+  }
   Ticker? _ticker;
   Duration? _lastElapsed;
   /// 累计播放时钟（秒）：驱动歌名跷跷板/BPM 回退的连续振荡。
@@ -156,6 +230,8 @@ class VizController extends ChangeNotifier implements TickerProvider {
   /// 当前该显示的音名：**只在人声段**有值（封面中央那个字母）。
   /// 乐器段改走背景散落（[scatter]），两者不会同时出现。
   String? get pitchNote => switch (window.phase) {
+        // 不播放就整个收起来：音名停在最后一帧，留着像卡死
+        _ when !live => null,
         // 散落还在被吸向中心时先不显示：让"吸进去"这一个动作演完，
         // 中央字母再接上，否则两段会同时出现在同一帧，看着像打架。
         // 唱完静 0.6s 也让字母落下去（>8s 段落前先收，段开始再升上来）。
@@ -204,6 +280,7 @@ class VizController extends ChangeNotifier implements TickerProvider {
   bool _shouldRun() {
     if (isPlaying() || engine.isPlaying) return true;
     if (cloudEnabled() || spectrumEnabled()) return true; // 词云/频谱开着就持续渲染
+    if (imagerEnabled()) return true; // 声像颗粒要一直流动
     if (climax >= 0.02) return true; // 高潮余韵
     if (kick.env >= 0.01) return true; // 打光余晖还要淡出
     if (cloud.hasActive) return true; // 词还在坠落
@@ -220,6 +297,7 @@ class VizController extends ChangeNotifier implements TickerProvider {
 
     // 以引擎为最终事实源：UI 状态偶发失同步时频谱也不该停摆
     final playing = isPlaying() || engine.isPlaying;
+    live = playing;
     final vol = volume();
     final oc = fxOn();
     final pc = oc && pitchEnabled();
@@ -421,14 +499,19 @@ class VizController extends ChangeNotifier implements TickerProvider {
        直接按 /255 等价换算会让曲线幅度只有 1px，看起来就是一条死平的环。
        这里跟踪本帧峰值做相对归一化 + gamma 提亮低幅 bin，任何标度都能用满量程。 */
     if (spectrumEnabled()) {
+      // 显示频段 → FFT bin 的映射按 fft 长度缓存；换窗口/切歌才重算
+      final fftLen = fft?.length ?? 0;
+      if (fftLen > 0 && fftLen != _specBinN) {
+        _specBins = buildSpecBins(fftLen);
+        _specBinN = fftLen;
+      }
       final mags = _magBuf;
+      final bins = _specBins;
       var peak = 0.0;
       for (var i = 0; i < kSpecN; i++) {
         double m = 0;
         if (real && fft != null) {
-          final bin = 2 +
-              (math.pow(i / kSpecN, 1.15) * (fft.length - 4) * 0.65).floor();
-          if (bin < fft.length) m = fft[bin].abs();
+          if (bins != null) m = fft[bins[i]].abs();
         } else if (playing && vol > 0) {
           final beat =
               math.pow(math.sin(tsec * math.pi * (128 / 60) + i * 0.6).abs(), 1.6);
@@ -448,8 +531,30 @@ class VizController extends ChangeNotifier implements TickerProvider {
       for (var i = 0; i < kSpecN; i++) {
         final norm = mags[i] * inv; // 0..1 相对峰值
         final t = norm <= 0 ? 0.0 : math.min(1.0, math.pow(norm, 0.55) * 1.15);
-        specVals[i] += (t - specVals[i]) * (t > specVals[i] ? 0.82 : 0.20);
+        // 分频段平滑：低频（i 小）起落都慢，把能量拖住；
+        // 高频跟手，抓瞬态。同一帧里两头的"手感"就是不一样。
+        final k = t > specVals[i] ? _specAtk[i] : _specRel[i];
+        specVals[i] += (t - specVals[i]) * k;
       }
+      // 播放中才显示（无 FFT 时上游会给 BPM 模拟值，同样算「在播」）
+      specLive = playing;
+    } else {
+      specLive = false;
+    }
+
+    /* ---- 声像：左右声道 → 宽度 → 颗粒场 ---- */
+    if (imagerEnabled() && _canvasSize != Size.zero) {
+      final stereo = engine is StereoEngine ? engine as StereoEngine : null;
+      imager.update(
+        stereo?.waveL,
+        stereo?.waveR,
+        active: real && playing,
+      );
+      imagerField.configure(_canvasSize, _coverRect?.center);
+      imagerField.tick(dt, imager.width);
+    } else {
+      imager.update(null, null, active: false);
+      specLive = false;
     }
 
     /* ---- 词云：播放进度驱动出场 + 生命周期推进 ---- */
@@ -485,6 +590,7 @@ class VizController extends ChangeNotifier implements TickerProvider {
       pitchScale = 1;
       pitchGlow = 0;
       pitchBlur = 0;
+      imager.update(null, null, active: false);
       cloudScale = 1;
       cloudJx = 0;
       cloudJy = 0;
@@ -501,7 +607,11 @@ class VizController extends ChangeNotifier implements TickerProvider {
 
   @override
   void dispose() {
+    // 先停再 dispose：Ticker 还在跑时直接销毁会在 debug 下断言，
+    // 单元测试里 dispose 一个正在播放的 viz 就会炸。
+    _ticker?.stop();
     _ticker?.dispose();
+    _ticker = null;
     super.dispose();
   }
 }

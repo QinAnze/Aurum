@@ -7,6 +7,7 @@ library;
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter_soloud/flutter_soloud.dart';
@@ -19,7 +20,7 @@ import 'player_engine.dart';
 const String _kUa =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
-class SoloudEngine implements PlayerEngine {
+class SoloudEngine implements PlayerEngine, StereoEngine {
   SoloudEngine();
 
   final SoLoud _soloud = SoLoud.instance;
@@ -48,6 +49,11 @@ class SoloudEngine implements PlayerEngine {
 
   Float32List? _fft;
   Float32List? _wave;
+  /// 分声道波形（声像检测用）；源码是单声道文件时为 null
+  Float32List? _waveL;
+  Float32List? _waveR;
+  /// 合成立体声用的缓冲，逐帧复用，避免每帧 alloc 2048 个 float
+  Float32List? _mixed;
 
   @override
   Stream<EngineEvent> get events => _events.stream;
@@ -58,6 +64,24 @@ class SoloudEngine implements PlayerEngine {
   @override
   Float32List? get wave => _wave;
 
+  @override
+  Float32List? get waveL => _waveL;
+
+  @override
+  Float32List? get waveR => _waveR;
+
+  /// 左右合成单声道（响度/音高检测沿用合并信号，行为与之前一致）
+  Float32List _mix(Float32List l, Float32List r) {
+    final n = math.min(l.length, r.length);
+    final out = (_mixed != null && _mixed!.length == n)
+        ? _mixed!
+        : (_mixed = Float32List(n));
+    for (var i = 0; i < n; i++) {
+      out[i] = (l[i] + r[i]) * 0.5;
+    }
+    return out;
+  }
+
   /* ---------------- 初始化 ---------------- */
 
   Future<void> _doInit() async {
@@ -67,12 +91,23 @@ class SoloudEngine implements PlayerEngine {
       true,
       windowSize: 2048,
       kind: VisualizationKind.waveAndFft,
-      channel: VisualizationChannel.merged,
+      // all = 每个声道各给一份。声像检测必须要左右两路；
+      // 单声道文件只会给一份，下面按 else 分支退回单路。
+      channel: VisualizationChannel.all,
     );
     _soloud.setFftSmoothing(0.78); // 对应原版 smoothingTimeConstant
     _visSub = _soloud.audioVisualizationEvents.listen((data) {
       _fft = data.fftData;
-      _wave = data.waveData;
+      final ch = data.wave;
+      if (ch.length >= 2) {
+        _waveL = ch[0];
+        _waveR = ch[1];
+        _wave = _mix(ch[0], ch[1]);
+      } else {
+        _waveL = null;
+        _waveR = null;
+        _wave = ch.isNotEmpty ? ch.first : null;
+      }
     });
   }
 

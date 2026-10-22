@@ -33,6 +33,18 @@ class EngineLoadFailed extends EngineEvent {}
 /// 全部候选失败（对应原版 tryPlayUrls resolve(false)）
 class EngineAllCandidatesFailed extends EngineEvent {}
 
+/// 可选能力：能给出**分声道**波形（声像/立体声宽度检测用）。
+///
+/// 单独一个接口而不是塞进 [PlayerEngine]，是因为所有测试替身都在
+/// `implements PlayerEngine` —— 往里加成员会让一堆 stub 编译失败。
+/// 引擎不实现它时，声像按「单声道」处理，特效自然停在最小状态。
+abstract class StereoEngine {
+  /// 左声道时域波形（-1..1）
+  Float32List? get waveL;
+  /// 右声道时域波形（-1..1）
+  Float32List? get waveR;
+}
+
 abstract class PlayerEngine {
   /// 初始化（幂等）
   Future<void> init();
