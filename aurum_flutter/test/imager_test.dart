@@ -108,13 +108,15 @@ void main() {
       expect(c.maxRadius, greaterThan(0));
     });
 
-    test('内圈地板在封面圆之外（否则点会藏在专辑图背后）', () {
+    test('内圈地板在封面圆内侧（封面半透明，点能透出来）', () {
       final c = ImagerFieldController()
         ..configure(const Size(1280, 800), const Offset(640, 400),
             coverRadius: 150);
-      // maxR = 800 * 0.62 = 496；150/496*1.10 ≈ 0.333
-      expect(c.floorRadius, greaterThan(150 / c.maxRadius));
-      expect(c.floorRadius, closeTo(150 / c.maxRadius * 1.10, 0.01));
+      // maxR = 800 * 0.62 = 496；150/496*0.62 ≈ 0.187
+      final coverRel = 150 / c.maxRadius;
+      expect(c.floorRadius, lessThan(coverRel));
+      expect(c.floorRadius, closeTo(coverRel * 0.62, 0.01));
+      expect(c.floorRadius, greaterThan(0.04));
     });
 
     test('甩出去会自己落回来：先冲高，再被重力拉回内圈', () {

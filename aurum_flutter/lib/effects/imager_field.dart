@@ -12,7 +12,8 @@
 ///
 /// 旧版本是"点位 = 声像数值"（每个点平滑移到对应半径），看起来像指针；
 /// 再之前的生命周期版是"出生→飘出→淡出→重生"，在 drop 段会因为点全缩在
-/// 封面背后而整片看不见。现在内圈地板放在**封面圆之外**，任何宽度下都有点。
+/// 封面背后而整片看不见。现在封面做成 50% 半透明，点透过去也看得见，
+/// 内圈地板因此可以收到封面内侧（视觉上像藏在玻璃后面）。
 ///
 /// 性能：绘制走 [ImagerPainter] 的**分档批量画**（alpha × 半径分桶，
 /// `drawRawPoints` 一次画一整桶），逐点 `drawCircle` 是几百次独立绘制调用。
@@ -66,8 +67,11 @@ class ImagerFieldController {
   /// 当前的声像宽度（0..1），由 VizController 每帧灌入
   double width = 0;
 
-  /// 内圈地板（归一化半径）。**必须大于封面圆的相对半径**，
-  /// 否则点会藏在专辑封面背后 —— drop 段整片消失就是这么来的。
+  /// 内圈地板（归一化半径）。
+  ///
+  /// 现在允许落在**封面圆内侧**：专辑封面已经做成 50% 半透明，
+  /// 点透过去反而更好看（像藏在玻璃后面）。早前封面不透明时，
+  /// 点缩进封面就会整片消失 —— 那才是 drop 段看不见点的原因。
   double get floorRadius => _floor;
   double _floor = 0.30;
 
@@ -136,15 +140,17 @@ class ImagerFieldController {
 
   /// 视口或中心变化时调用（幂等）。
   ///
-  /// [coverRadius] 是封面圆的半径（px）：内圈地板会放在它外面一点，
-  /// 保证颗粒永远露在封面之外，不会藏到专辑图背后。
+  /// [coverRadius] 是封面圆的半径（px）：内圈地板按它的 0.62 倍放，
+  /// 落在封面内侧 —— 封面半透明，点透过去看得见。
   void configure(Size viewport, Offset? coverCenter, {double coverRadius = 0}) {
     if (viewport.isEmpty) return;
     center = coverCenter ?? Offset(viewport.width / 2, viewport.height / 2);
     // 扩散半径取短边的一大半：能明显超出封面圆，但不会顶到面板边缘
     maxRadius = viewport.shortestSide * 0.62;
     if (coverRadius > 0) {
-      _floor = (coverRadius / maxRadius * 1.10).clamp(0.06, 0.82);
+      // 0.62 = 位于封面圆内侧：单声道时会缩成封面里的一小圈，
+      // 透过 50% 半透明的封面仍看得见
+      _floor = (coverRadius / maxRadius * 0.62).clamp(0.04, 0.82);
     }
     if (dots.isEmpty) _seed();
   }

@@ -8,6 +8,17 @@ import 'package:flutter/foundation.dart';
 const String kApi = 'https://music-api.gdstudio.xyz/api.php';
 const String kApi2 = 'https://api.injahow.cn/meting/'; // 备用播放地址解析（302 直链）
 const String kLocalApi = 'http://127.0.0.1:4530'; // 本地 NCMApi sidecar
+
+/// 网易云**直连**（音乐数据库那个项目走的就是这条路：不经第三方镜像，
+/// 直接打 music.163.com 的站内 JSON 接口）。
+///
+/// 实测 2026-10-22：搜索 0.35s、详情 0.2s，比公共镜像稳；
+/// 取流走 outer/url —— 免费曲目 302 到 CDN，付费曲目 302 到 /404，
+/// 引擎拿到 HTML 会判为坏候选并自动跳下一个。
+const String kNeteaseSearch = 'https://music.163.com/api/search/get/web';
+const String kNeteaseDetail = 'https://music.163.com/api/song/detail';
+const String kNeteaseOuterUrl = 'https://music.163.com/song/media/outer/url';
+
 const List<String> kSources = ['netease', 'kuwo']; // 搜索双源：网易优先，酷我兜底
 const List<int> kBitrates = [320, 192, 128]; // 码率回退链
 const List<String> kLocalLevels = ['exhigh', 'standard', 'lossless']; // 本地音质回退链

@@ -80,6 +80,80 @@ Track _trackFromPublicJson(Map<String, dynamic> s, String src) {
   );
 }
 
+/* ---------------- 网易直连（Rhine 用的那套） ---------------- */
+
+/// 直接打 music.163.com 的站内接口：不经任何第三方镜像。
+///
+/// 这是「音乐数据库」项目的做法 —— 它对网易、QQ、酷狗都是直连平台本体，
+/// 所以没有镜像挂了的风险。这里只取网易的搜索 + 详情（封面）：
+/// 搜索 0.3s 级、详情一次批量补封面，比公共镜像快且稳。
+Future<List<Track>> _searchNeteaseDirect(String keyword,
+    {int limit = 24}) async {
+  final uri = Uri.parse(kNeteaseSearch).replace(queryParameters: {
+    's': keyword,
+    'type': '1',
+    'limit': '$limit',
+    'offset': '0',
+  });
+  final d = await _getJson(uri);
+  final result = (d is Map) ? d['result'] : null;
+  final songs = (result is Map) ? result['songs'] : null;
+  if (songs is! List || songs.isEmpty) return const [];
+
+  final out = <Track>[];
+  for (final raw in songs) {
+    if (raw is! Map) continue;
+    final m = raw.cast<String, dynamic>();
+    final album = (m['album'] is Map) ? m['album'] as Map : const {};
+    final artists = (m['artists'] is List) ? m['artists'] as List : const [];
+    final names = artists
+        .whereType<Map>()
+        .map((a) => '${a['name'] ?? ''}')
+        .where((n) => n.isNotEmpty)
+        .join(' / ');
+    out.add(Track(
+      id: '${m['id']}',
+      name: '${m['name'] ?? ''}',
+      artist: names.isEmpty ? '未知歌手' : names,
+      album: '${album['name'] ?? ''}',
+      picId: album['picId'] == null ? '' : '${album['picId']}',
+      source: 'netease',
+    ));
+  }
+  await _fillNeteasePics(out);
+  return out;
+}
+
+/// 批量补封面：搜索接口只给 picId，详情接口才带 picUrl。
+/// ids 必须带方括号（`[1,2]`，URL 编码成 %5B…%5D），裸逗号会报 400。
+Future<void> _fillNeteasePics(List<Track> list) async {
+  if (list.isEmpty) return;
+  try {
+    final ids = list.map((t) => t.id).join(',');
+    final uri = Uri.parse(kNeteaseDetail)
+        .replace(queryParameters: {'ids': '[$ids]'});
+    final d = await _getJson(uri);
+    final songs = (d is Map) ? d['songs'] : null;
+    if (songs is! List) return;
+    final pics = <String, String>{};
+    for (final raw in songs) {
+      if (raw is! Map) continue;
+      final m = raw.cast<String, dynamic>();
+      final al = m['album'] ?? m['al'];
+      final pic = (al is Map) ? al['picUrl'] : null;
+      if (pic is String && pic.isNotEmpty) pics['${m['id']}'] = pic;
+    }
+    for (final t in list) {
+      final pic = pics[t.id];
+      if (pic != null && t.picUrl.isEmpty) {
+        t.picUrl = pic.contains('?') ? pic : '$pic?param=300y300';
+      }
+    }
+  } catch (_) {
+    /* 封面缺失不致命，后面还有 types=pic 兜底 */
+  }
+}
+
 /// 搜索（对应原版 search()）：本地 NCMApi 优先 → 网易 → 酷我
 Future<List<Track>> searchTracks(String keyword) async {
   var list = <Track>[];
@@ -129,7 +203,16 @@ Future<List<Track>> searchTracks(String keyword) async {
     }
   }
 
-  // 公共 API 链：网易优先（常被限流），酷我兜底（稳定）
+  // 网易直连（中间没有镜像，最不容易挂）
+  if (list.isEmpty) {
+    try {
+      list = await _searchNeteaseDirect(keyword);
+    } catch (_) {
+      /* 直连不通就退到镜像链 */
+    }
+  }
+
+  // 公共镜像链：网易优先（常被限流），酷我兜底（稳定）
   if (list.isEmpty) {
     for (final src in kSources) {
       try {
@@ -248,6 +331,9 @@ Future<List<String>> urlCandidates(Track track) async {
         /* 换下一码率 */
       }
     }
+    // 直连平台取流：免费曲目 302 到 CDN；付费曲目 302 到 /404，
+    // 引擎会把它当坏候选跳过（HTML 过不了时长探测）
+    urls.add('$kNeteaseOuterUrl?id=${track.id}.mp3');
     urls.add('$kApi2?server=netease&type=url&id=${track.id}');
   } else {
     urls.add('$kApi2?server=kuwo&type=url&id=${track.id}');

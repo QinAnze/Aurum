@@ -11,6 +11,10 @@ import '../effects/viz_controller.dart';
 import '../net_image.dart';
 import '../theme/tokens.dart';
 
+/// 封面本体的不透明度。50% 是用户指定的值：再低廉价感明显，
+/// 再高就看不见后面的声像颗粒了。
+const double kCoverOpacity = 0.5;
+
 class CoverArt extends StatefulWidget {
   const CoverArt({
     super.key,
@@ -291,16 +295,22 @@ class _CoverArtState extends State<CoverArt>
           ),
         ],
       ),
+      // 封面本体压到 50%：声像颗粒画在背景层（在封面之下），
+      // 不透明时会整片藏在专辑图后面 —— 半透明之后能透出颗粒。
+      // 外圈描边与投影留在 Opacity 外面，保持边缘清楚。
       child: ClipOval(
-        child: url != null
-            ? Image(
-                image: aurumImage(url),
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => const ColoredBox(
-                  color: Color(0xFF22283A),
-                ),
-              )
-            : const ColoredBox(color: Color(0xFF22283A)),
+        child: Opacity(
+          opacity: kCoverOpacity,
+          child: url != null
+              ? Image(
+                  image: aurumImage(url),
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const ColoredBox(
+                    color: Color(0xFF22283A),
+                  ),
+                )
+              : const ColoredBox(color: Color(0xFF22283A)),
+        ),
       ),
     );
   }
