@@ -173,20 +173,57 @@ class SoloudEngine implements PlayerEngine, StereoEngine {
     try {
       await _stopInternal();
 
-      for (final url in urls) {
+      // 候选**同时**开下，谁先拿到能解码的音频就用谁。
+      // 以前是逐个串行试：第一个源慢/挂了，用户就得干等（meting 常常 2s 起）。
+      final raced = await _raceDownload(urls, gen);
+      if (!_gate.isCurrent(gen)) return false;
+
+      final tried = <String>{};
+      Uint8List? bytes = raced?.bytes;
+      if (raced != null) {
+        tried.add(raced.url);
+      } else {
+        // 竞速已经把每个候选都试过一遍了，别再重复下
+        tried.addAll(urls);
+      }
+
+      while (true) {
         if (!_gate.isCurrent(gen)) return false;
-        try {
-          final bytes = await _download(url);
-          if (!_gate.isCurrent(gen)) return false; // 下载期间被抢占，直接放弃
-          if (bytes == null || bytes.length < 1024) {
-            _events.add(EngineLoadFailed());
-            continue;
+        // 竞速没结果（或这一份 loadMem 失败）：退回逐个试剩下的，
+        // 保证「慢但能用」的源最后也有机会。
+        if (bytes == null) {
+          String? next;
+          for (final u in urls) {
+            if (!tried.contains(u)) {
+              next = u;
+              break;
+            }
           }
-          final dur = probeAudioDuration(bytes);
+          if (next == null) break;
+          tried.add(next);
+          try {
+            bytes = await _download(next);
+          } catch (_) {
+            bytes = null;
+          }
+          if (!_gate.isCurrent(gen)) return false;
+          if (bytes != null && bytes.length >= 1024) {
+            // 竞速阶段没验证时长，这里补一次
+            if (probeAudioDuration(bytes) == null) bytes = null;
+          } else {
+            bytes = null;
+          }
+          continue;
+        }
+
+        final data = bytes;
+        bytes = null;
+        try {
+          final dur = probeAudioDuration(data);
           final path = 'aurum://track-${++_loadCounter}';
           final sound = await _soloud.loadMem(
             path,
-            bytes,
+            data,
             mode: LoadMode.memory,
             autoDispose: false,
           );
@@ -204,7 +241,7 @@ class SoloudEngine implements PlayerEngine, StereoEngine {
             try {
               await _soloud.disposeSource(sound);
             } catch (_) {}
-            continue;
+            continue; // 换下一份
           }
           // play 之后最后一次确认：若已被抢占，立刻把自己停掉并销毁
           if (!_gate.isCurrent(gen)) {
@@ -242,6 +279,85 @@ class SoloudEngine implements PlayerEngine, StereoEngine {
     } finally {
       _gate.release();
     }
+  }
+
+  /// 候选错开 300ms 起跑，**第一个拿到可解码音频的赢**，其余立刻掐断。
+  ///
+  /// 判据是「能探测出时长」而不是 200 或体积：outer/url 对付费曲目会 302
+  /// 到 /404 页面，那也是一坨 >1KB 的 HTML，光看状态码会拿它当成功。
+  Future<({String url, Uint8List bytes})?> _raceDownload(
+      List<String> urls, int gen) async {
+    if (urls.isEmpty) return null;
+    final client = http.Client();
+    final winner = Completer<({String url, Uint8List bytes})?>();
+    var settled = false;
+
+    void finish(({String url, Uint8List bytes})? hit) {
+      if (settled) return;
+      settled = true;
+      if (!winner.isCompleted) winner.complete(hit);
+    }
+
+    var started = 0;
+    var done = 0;
+    void maybeFail() {
+      if (!settled && started == urls.length && done == started) finish(null);
+    }
+
+    // 候选**错开 300ms** 起跑：第一个够快就独占带宽直接赢；
+    // 只有它卡住时后面的才补上。全在同一毫秒开下会把带宽切成几份，
+    // 反而比单下更慢。
+    for (var i = 0; i < urls.length; i++) {
+      final url = urls[i];
+      Timer(Duration(milliseconds: 300 * i), () {
+        if (settled) return;
+        if (!_gate.isCurrent(gen)) {
+          finish(null);
+          return;
+        }
+        started++;
+        _downloadWith(client, url).then((bytes) {
+          done++;
+          if (settled) return;
+          if (bytes != null &&
+              bytes.length >= 1024 &&
+              probeAudioDuration(bytes) != null) {
+            finish((url: url, bytes: bytes));
+          } else {
+            maybeFail();
+          }
+        }).catchError((_) {
+          done++;
+          maybeFail();
+        });
+      });
+    }
+
+    final hit = await winner.future;
+    // 赢了就掐掉其它还在下的连接，别白烧流量
+    try {
+      client.close();
+    } catch (_) {}
+    return hit;
+  }
+
+  /// 与 [_download] 同语义，但用指定 client（竞速时好统一掐断）
+  Future<Uint8List?> _downloadWith(http.Client client, String url) async {
+    final path = _localPathOf(url);
+    if (path != null) {
+      try {
+        final f = File(path);
+        if (!await f.exists()) return null;
+        return await f.readAsBytes();
+      } catch (_) {
+        return null;
+      }
+    }
+    final r = await client
+        .get(Uri.parse(url), headers: {'User-Agent': _kUa})
+        .timeout(const Duration(seconds: 20));
+    if (r.statusCode != 200) return null;
+    return r.bodyBytes;
   }
 
   void _listenSource(AudioSource sound, SoundHandle handle) {

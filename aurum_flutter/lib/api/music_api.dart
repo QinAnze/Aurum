@@ -2,6 +2,7 @@
 /// 契约层：AppState / widgets 只经本文件访问网络。
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -154,82 +155,95 @@ Future<void> _fillNeteasePics(List<Track> list) async {
   }
 }
 
-/// 搜索（对应原版 search()）：本地 NCMApi 优先 → 网易 → 酷我
+/// 搜索：**所有源同时开跑，谁先给出非空结果就用谁**。
+///
+/// 以前是串行：本地 → 直连 → 镜像 → 酷我，前一个慢/挂就全等着。
+/// 现在四路并发，最快的那个决定结果（通常仍是网易直连，0.3~0.5s）。
 Future<List<Track>> searchTracks(String keyword) async {
-  var list = <Track>[];
+  final sources = <Future<List<Track>>>[
+    if (localApiOn.value) _searchLocal(keyword),
+    _searchNeteaseDirect(keyword),
+    _searchGd(keyword, 'netease'),
+    _searchGd(keyword, 'kuwo'),
+  ];
+  return _firstNonEmpty(sources);
+}
 
-  // 本地 NCMApi 优先：完整曲库、无限流
-  if (localApiOn.value) {
-    try {
-      final d = await _getJson(Uri.parse(
-          '$kLocalApi/search?keywords=${Uri.encodeQueryComponent(keyword)}&limit=24'));
-      final result = (d is Map) ? d['result'] : null;
-      final songs = (result is Map) ? result['songs'] : null;
-      list = (songs is List ? songs : const []).map((s) {
-        final m = s as Map<String, dynamic>;
-        final artists = (m['artists'] as List<dynamic>? ?? [])
-            .map((a) => '${(a as Map<String, dynamic>)['name']}')
-            .join(' / ');
-        return Track(
-          id: '${m['id']}',
-          name: '${m['name'] ?? ''}',
-          artist: artists.isEmpty ? '未知歌手' : artists,
-          album: '${(m['album'] as Map<String, dynamic>?)?['name'] ?? ''}',
-          source: 'local',
-        );
-      }).toList();
-      // /search 不带封面，批量 /song/detail 补 picUrl
-      if (list.isNotEmpty) {
-        try {
-          final ids = list.map((t) => t.id).join(',');
-          final dd = await _getJson(Uri.parse('$kLocalApi/song/detail?ids=$ids'));
-          final picMap = <String, String>{};
-          for (final s in ((dd as Map)['songs'] as List<dynamic>? ?? [])) {
-            final m = s as Map<String, dynamic>;
-            final al = m['al'] as Map<String, dynamic>?;
-            final pic = al?['picUrl'];
-            if (pic != null) picMap['${m['id']}'] = '$pic?param=300y300';
-          }
-          for (final t in list) {
-            final pic = picMap[t.id];
-            if (pic != null) t.picUrl = pic;
-          }
-        } catch (_) {
-          /* 封面缺失不致命 */
-        }
-      }
-    } catch (_) {
-      localApiOn.value = false;
-    }
+/// 并发取「第一个非空」；全空/全败则返回空表
+Future<List<Track>> _firstNonEmpty(Iterable<Future<List<Track>>> fs) async {
+  final done = Completer<List<Track>>();
+  var left = 0;
+  for (final f in fs) {
+    left++;
+    f.then((v) {
+      if (!done.isCompleted && v.isNotEmpty) done.complete(v);
+    }).catchError((_) {}).whenComplete(() {
+      left--;
+      if (left == 0 && !done.isCompleted) done.complete(const []);
+    });
   }
+  if (left == 0) return const [];
+  return done.future;
+}
 
-  // 网易直连（中间没有镜像，最不容易挂）
-  if (list.isEmpty) {
-    try {
-      list = await _searchNeteaseDirect(keyword);
-    } catch (_) {
-      /* 直连不通就退到镜像链 */
-    }
-  }
-
-  // 公共镜像链：网易优先（常被限流），酷我兜底（稳定）
-  if (list.isEmpty) {
-    for (final src in kSources) {
+/// 本地 NCMApi sidecar（完整曲库、无限流）
+Future<List<Track>> _searchLocal(String keyword) async {
+  try {
+    final d = await _getJson(Uri.parse(
+        '$kLocalApi/search?keywords=${Uri.encodeQueryComponent(keyword)}&limit=24'));
+    final result = (d is Map) ? d['result'] : null;
+    final songs = (result is Map) ? result['songs'] : null;
+    final list = (songs is List ? songs : const []).map((s) {
+      final m = s as Map<String, dynamic>;
+      final artists = (m['artists'] as List<dynamic>? ?? [])
+          .map((a) => '${(a as Map<String, dynamic>)['name']}')
+          .join(' / ');
+      return Track(
+        id: '${m['id']}',
+        name: '${m['name'] ?? ''}',
+        artist: artists.isEmpty ? '未知歌手' : artists,
+        album: '${(m['album'] as Map<String, dynamic>?)?['name'] ?? ''}',
+        source: 'local',
+      );
+    }).toList();
+    // /search 不带封面，批量 /song/detail 补 picUrl
+    if (list.isNotEmpty) {
       try {
-        final d = await api(
-            {'types': 'search', 'name': keyword, 'count': '24', 'pages': '1'},
-            src);
-        final arr = (d is List ? d : const [])
-            .cast<Map<String, dynamic>>()
-            .toList();
-        list = arr.map((s) => _trackFromPublicJson(s, src)).toList();
-        if (list.isNotEmpty) break;
+        final ids = list.map((t) => t.id).join(',');
+        final dd = await _getJson(Uri.parse('$kLocalApi/song/detail?ids=$ids'));
+        final picMap = <String, String>{};
+        for (final s in ((dd as Map)['songs'] as List<dynamic>? ?? [])) {
+          final m = s as Map<String, dynamic>;
+          final al = m['al'] as Map<String, dynamic>?;
+          final pic = al?['picUrl'];
+          if (pic != null) picMap['${m['id']}'] = '$pic?param=300y300';
+        }
+        for (final t in list) {
+          final pic = picMap[t.id];
+          if (pic != null) t.picUrl = pic;
+        }
       } catch (_) {
-        /* 换下一个源 */
+        /* 封面缺失不致命 */
       }
     }
+    return list;
+  } catch (_) {
+    localApiOn.value = false;
+    return const [];
   }
-  return list;
+}
+
+/// GDStudio 公共镜像
+Future<List<Track>> _searchGd(String keyword, String src) async {
+  try {
+    final d = await api(
+        {'types': 'search', 'name': keyword, 'count': '24', 'pages': '1'}, src);
+    final arr =
+        (d is List ? d : const []).cast<Map<String, dynamic>>().toList();
+    return arr.map((s) => _trackFromPublicJson(s, src)).toList();
+  } catch (_) {
+    return const [];
+  }
 }
 
 /* ---------------- 跨源解析（酷我 → 网易） ---------------- */
@@ -291,54 +305,91 @@ Future<String?> fetchLyricLrc(Track track) async {
 
 /* ---------------- 播放地址候选链 ---------------- */
 
-/// 候选播放地址链（对应原版 playAt 内联逻辑）：
-///  - 本地：song/url/v1 音质回退 → injahow netease 302 兜底
-///  - 网易（公共）：GDStudio 码率回退(320→192→128) → injahow 302 兜底
-///  - 酷我：injahow kuwo 302（约 1/3 命中）
+/// 快路径候选：**不需要额外请求**（或只问本地 sidecar）就能给出的地址。
+///
+/// 引擎会把这些地址同时开下，谁先拿到可解码音频谁赢。
+/// GDStudio 那种"要现问一次"的源故意不放在这里 —— 实测它的取流接口
+/// 要 3~5s，塞进来会把起播整整拖慢几秒。它退到 [slowUrlCandidates]，
+/// 只有快路径全挂时才用。
 Future<List<String>> urlCandidates(Track track) async {
-  final urls = <String>[];
   if (track.source == 'file') {
     // 本地文件：路径即播放源，无候选链
-    urls.add(track.id);
-  } else if (track.source == 'local') {
-    for (final lv in kLocalLevels) {
-      try {
-        final d = await _getJson(
-            Uri.parse('$kLocalApi/song/url/v1?id=${track.id}&level=$lv'));
-        final data = (d is Map) ? d['data'] : null;
-        final first = (data is List && data.isNotEmpty) ? data[0] : null;
-        final u = (first is Map) ? first['url'] : null;
-        if (u != null && '$u'.isNotEmpty) {
-          urls.add('$u');
-          break;
-        }
-      } catch (_) {
-        /* 换下一音质 */
-      }
+    return [track.id];
+  }
+
+  if (track.source == 'local') {
+    final urls = <String>[];
+    // 音质回退链并发问（本机 127.0.0.1，毫秒级）：
+    // exhigh 拿不到时，standard/lossless 的结果早就在了
+    final resolved =
+        await Future.wait(kLocalLevels.map((lv) => _localUrl(track.id, lv)));
+    for (final u in resolved) {
+      if (u != null && u.isNotEmpty) urls.add(u);
     }
     urls.add('$kApi2?server=netease&type=url&id=${track.id}');
-  } else if (track.source == 'netease') {
-    for (final br in kBitrates) {
-      try {
-        final d =
-            await api({'types': 'url', 'id': track.id, 'br': '$br'}, 'netease');
-        final u = (d is Map) ? d['url'] : null;
-        if (u != null && '$u'.isNotEmpty) {
-          urls.add('$u');
-          break;
-        }
-      } catch (_) {
-        /* 换下一码率 */
-      }
-    }
-    // 直连平台取流：免费曲目 302 到 CDN；付费曲目 302 到 /404，
-    // 引擎会把它当坏候选跳过（HTML 过不了时长探测）
-    urls.add('$kNeteaseOuterUrl?id=${track.id}.mp3');
-    urls.add('$kApi2?server=netease&type=url&id=${track.id}');
-  } else {
-    urls.add('$kApi2?server=kuwo&type=url&id=${track.id}');
+    return urls;
+  }
+
+  if (track.source == 'netease') {
+    return [
+      // 直连 CDN：免费曲目 302 到 mp3；付费曲目 302 到 /404，
+      // 引擎拿到 HTML 过不了时长探测，会当坏候选丢掉
+      '$kNeteaseOuterUrl?id=${track.id}.mp3',
+      '$kApi2?server=netease&type=url&id=${track.id}',
+    ];
+  }
+
+  return ['$kApi2?server=kuwo&type=url&id=${track.id}'];
+}
+
+/// 慢路径候选：要现问第三方镜像（实测 GDStudio 取流 3~5s）。
+///
+/// 只有 [urlCandidates] 整条链都失败时才会走到这里 —— 此时用户已经在等，
+/// 多花几秒换一个能播的源是值得的。
+Future<List<String>> slowUrlCandidates(Track track) async {
+  final urls = <String>[];
+  if (track.source == 'netease' || track.source == 'local') {
+    final u = await _gdUrl(track.id, 'netease');
+    if (u != null) urls.add(u);
+  }
+  if (track.source == 'kuwo') {
+    final u = await _gdUrl(track.id, 'kuwo');
+    if (u != null) urls.add(u);
   }
   return urls;
+}
+
+/// 本地 sidecar 的某个音质档位 → 直链
+Future<String?> _localUrl(String id, String level) async {
+  try {
+    final d = await _getJson(
+        Uri.parse('$kLocalApi/song/url/v1?id=$id&level=$level'));
+    final data = (d is Map) ? d['data'] : null;
+    final first = (data is List && data.isNotEmpty) ? data[0] : null;
+    final u = (first is Map) ? first['url'] : null;
+    return (u != null && '$u'.isNotEmpty) ? '$u' : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// GDStudio 的三个码率**并发**问，先给出地址的算数（不再 320→192→128 串行）
+Future<String?> _gdUrl(String id, String source) async {
+  final results = await Future.wait(kBitrates.map((br) async {
+    try {
+      final d = await api(
+          {'types': 'url', 'id': id, 'br': '$br', 'source': source},
+          source);
+      final u = (d is Map) ? d['url'] : null;
+      return (u != null && '$u'.isNotEmpty) ? '$u' : null;
+    } catch (_) {
+      return null;
+    }
+  }));
+  for (final u in results) {
+    if (u != null) return u;
+  }
+  return null;
 }
 
 /* ---------------- 封面取色 → 主题色 + 调色板 ----------------

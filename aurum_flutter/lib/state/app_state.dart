@@ -296,7 +296,14 @@ class AppState extends ChangeNotifier {
       final urls = await urlCandidates(track);
       if (token != _reqToken) return;
       _tryingUrls = true;
-      final ok = await engine.loadAndPlay(urls);
+      // 快路径：纯 URL 候选同时开下，谁先能用谁赢
+      var ok = await engine.loadAndPlay(urls);
+      if (!ok && token == _reqToken) {
+        // 慢路径：GDStudio 这种要现问 3~5s 的源，只有快路径全挂了才等
+        final slow = await slowUrlCandidates(track);
+        if (token != _reqToken) return;
+        if (slow.isNotEmpty) ok = await engine.loadAndPlay(slow);
+      }
       _tryingUrls = false;
       if (token != _reqToken) return;
       if (!ok) {
