@@ -39,6 +39,24 @@ __chk.js
 _rhine_build/
 _aurum_b*/
 
+# Windows / CMake / Visual Studio 残留（Flutter windows 构建会顺手生成）
+.vs/
+CMakeFiles/
+CMakeCache.txt
+CMakeUserPresets.json
+*.VC.db
+*.VC.opendb
+*.VC.db-shm
+*.VC.db-wal
+x64/
+out/
+
+# 打包产物：正式 zip 由 CI 出，本地就算拷出来也不入库
+aurum_flutter/*.exe
+aurum_flutter/*.dll
+aurum_flutter/*.pdb
+aurum_flutter/*.zip
+
 # 本地调试截图 / 临时 fixture / 渲染输出
 desktop_qt/_dev/
 
